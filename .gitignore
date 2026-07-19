@@ -1,0 +1,23 @@
+# CCS Theia / MSPM0 build outputs
+Debug/**/*.o
+Debug/**/*.out
+Debug/**/*.hex
+Debug/**/*.map
+Debug/**/*.d
+Debug/*.xml
+Debug/*.opt
+Debug/makefile
+Debug/objects.mk
+Debug/sources.mk
+Debug/subdir_rules.mk
+Debug/subdir_vars.mk
+Debug/ccsObjs.opt
+Debug/empty_mspm0g3507_linkInfo.xml
+
+# Language server cache
+.clangd/
+Debug/.clangd/
+
+# OS files
+Thumbs.db
+Desktop.ini
