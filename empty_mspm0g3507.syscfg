@@ -55,4 +55,3 @@ UART1.rxPinConfig.onlyInternalResistor = scripting.forceWrite(false);
 UART1.rxPinConfig.passedPeripheralType = scripting.forceWrite("Digital");
 
 ProjectConfig.deviceSpin = "MSPM0G3507";
-ProjectConfig.stackSize   = 2048;
