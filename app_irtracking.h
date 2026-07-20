@@ -10,15 +10,9 @@
 
 /* ========== 巡线 PID 参数 (可调) ========== */
 /* Line tracking PID parameters (adjustable) */
-/*
- * PID 调参:
- *   KD 必须远小于 KP, 否则偏差回正时微分项会反向打方向盘
- *   (偏差还在左侧, 车已经开始往右转 → 来回摆)
- *   建议 KD = KP * 0.1 ~ 0.2
- */
-#define IRTrack_Trun_KP   (350)   /* 比例系数: 500→350, 减少过度转向 */
-#define IRTrack_Trun_KI   (0)     /* 积分系数: 巡线不需要 */
-#define IRTrack_Trun_KD   (50)    /* 微分系数: 轻度阻尼, 防过冲不反打 */
+#define IRTrack_Trun_KP   (500)   /* 比例系数 Proportional */
+#define IRTrack_Trun_KI   (0)     /* 积分系数 Integral     */
+#define IRTrack_Trun_KD   (0)     /* 微分系数 Derivative   */
 
 /* 巡线速度 (0~1000) */
 #define IRR_SPEED          300

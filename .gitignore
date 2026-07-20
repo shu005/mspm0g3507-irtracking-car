@@ -21,3 +21,4 @@ Debug/.clangd/
 # OS files
 Thumbs.db
 Desktop.ini
+.claude/
