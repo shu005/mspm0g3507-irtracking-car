@@ -17,6 +17,22 @@
 #include "app_irtracking.h"
 #include "app_motor.h"
 
+/* ========== 直角弯四轮动力参数 ========== */
+/*
+ * 内侧轮低速反转、外侧轮正转，形成带少量前进量的原地转向。
+ * 单轮速度范围为 -1000 ~ 1000。
+ */
+#define CORNER_OUTER_SPEED   600
+#define CORNER_INNER_SPEED  (-350)
+#define CORNER_HOLD_MS        30
+
+/*
+ * 仅削弱中心附近的小误差修正。
+ * 40表示保留原PID输出的40%。
+ */
+#define CENTER_ERROR_RANGE       2
+#define CENTER_OUTPUT_PERCENT   40
+
 /* ========== 全局变量 ========== */
 int  pid_output_IRR = 0;       /* PID 输出 (传给电机控制) */
 u8   trun_flag = 0;            /* 转向标志 (预留) */
@@ -136,6 +152,23 @@ float PID_IR_Calc(int8_t actual_value)
     return IRTrackTurn;
 }
 
+/* ========== 直角弯直接四轮控制 ========== */
+static void IR_CornerTurnLeft(void)
+{
+    /* 左侧为内轮，右侧为外轮。 */
+    Contrl_Speed(CORNER_INNER_SPEED, CORNER_INNER_SPEED,
+                 CORNER_OUTER_SPEED, CORNER_OUTER_SPEED);
+    delay_ms(CORNER_HOLD_MS);
+}
+
+static void IR_CornerTurnRight(void)
+{
+    /* 左侧为外轮，右侧为内轮。 */
+    Contrl_Speed(CORNER_OUTER_SPEED, CORNER_OUTER_SPEED,
+                 CORNER_INNER_SPEED, CORNER_INNER_SPEED);
+    delay_ms(CORNER_HOLD_MS);
+}
+
 /* ========== 巡线主逻辑 ========== */
 /*
  * 巡线策略:
@@ -155,9 +188,14 @@ void LineWalking(void)
 {
     static int8_t err = 0;
     static u8 x1, x2, x3, x4, x5, x6, x7, x8;
+    u8 black_count;
 
     /* 1. 读取传感器 */
     deal_IRdata(&x1, &x2, &x3, &x4, &x5, &x6, &x7, &x8);
+
+    /* 统计压到黑线的传感器数量，0表示检测到黑线。 */
+    black_count = (u8)((x1 == 0) + (x2 == 0) + (x3 == 0) + (x4 == 0)
+                     + (x5 == 0) + (x6 == 0) + (x7 == 0) + (x8 == 0));
 
     /* 2. 急转弯优先判断 (直角/锐角) */
     /*    线在最左侧 5 个传感器, 车偏右太多, 需急左转 */
@@ -165,14 +203,16 @@ void LineWalking(void)
           && x5 == 0 && x6 == 1 && x7 == 1 && x8 == 1)   /* 0000 0111 */
     {
         err = -15;
-        delay_ms(100);
+        IR_CornerTurnLeft();
+        return;
     }
     /*    线在最右侧 4 个传感器, 车偏左太多, 需急右转 */
     else if (x1 == 1 && x2 == 1 && x3 == 1 && x4 == 0
           && x5 == 0 && x6 == 0 && x7 == 0 && x8 == 0)   /* 1110 0000 */
     {
         err = 15;
-        delay_ms(100);
+        IR_CornerTurnRight();
+        return;
     }
     /*    线在左侧 6 个传感器 */
     else if (x1 == 0 && x2 == 0 && x3 == 0 && x4 == 0
@@ -185,6 +225,23 @@ void LineWalking(void)
           && x5 == 0 && x6 == 0 && x7 == 0 && x8 == 0)   /* 1100 0000 */
     {
         err = 12;
+    }
+    /*
+     * 兼容原来没有覆盖到的急弯形状：
+     * 黑线覆盖至少4路，并且只接触一侧最外传感器。
+     * 对这些遗漏形状同样直接执行四轮急转。
+     */
+    else if (x1 == 0 && x8 == 1 && black_count >= 4)   /* 左侧宽黑线 */
+    {
+        err = -15;
+        IR_CornerTurnLeft();
+        return;
+    }
+    else if (x1 == 1 && x8 == 0 && black_count >= 4)   /* 右侧宽黑线 */
+    {
+        err = 15;
+        IR_CornerTurnRight();
+        return;
     }
     /* 3. 剩余情况: 质心法计算偏差 */
     else
@@ -222,6 +279,18 @@ void LineWalking(void)
 
     /* 5. PID 计算 + 控制电机 */
     pid_output_IRR = (int)(PID_IR_Calc(err));
+
+    /*
+     * 中心附近通常只会出现-2、0、+2的小误差。
+     * 原来err=+/-2会产生+/-1000转向指令，
+     * 现在缩小为+/-400，减少左右反复摆动。
+     * 大弯和直角弯完全不受影响。
+     */
+    if (err >= -CENTER_ERROR_RANGE && err <= CENTER_ERROR_RANGE)
+    {
+        pid_output_IRR =
+            (pid_output_IRR * CENTER_OUTPUT_PERCENT) / 100;
+    }
 
     Motion_Car_Control(IRR_SPEED, 0, pid_output_IRR);
 }
