@@ -24,7 +24,7 @@ int main(void)
     /* 电机自检 */
     Contrl_Speed(200, 200, 200, 200);
     delay_ms(2000);
-    Contrl_Speed(300, 300, -200, -200);
+    Contrl_Speed(-200, -200, -200, -200);
     delay_ms(1000);
     Contrl_Speed(0, 0, 0, 0);
     delay_ms(1000);
