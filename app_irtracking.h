@@ -10,9 +10,9 @@
 
 /* ========== 巡线 PID 参数 (可调) ========== */
 /* Line tracking PID parameters (adjustable) */
-#define IRTrack_Trun_KP   (500)   /* 比例系数 Proportional */
+#define IRTrack_Trun_KP   (280)   /* 比例系数 Proportional */
 #define IRTrack_Trun_KI   (0)     /* 积分系数 Integral     */
-#define IRTrack_Trun_KD   (0)     /* 微分系数 Derivative   */
+#define IRTrack_Trun_KD   (150)   /* 微分系数 Derivative   */
 
 /* 巡线速度 (0~1000) */
 #define IRR_SPEED          300
@@ -33,8 +33,8 @@ uint8_t IRI2C_ReadByte(uint8_t addr);
 void deal_IRdata(u8 *x1, u8 *x2, u8 *x3, u8 *x4,
                  u8 *x5, u8 *x6, u8 *x7, u8 *x8);
 
-/* 位置式 PID 计算 (转向控制) */
-float PID_IR_Calc(int8_t actual_value);
+/* 位置式 PID 计算 (转向控制, 整数运算) */
+int32_t PID_IR_Calc(int8_t actual_value);
 
 /* 巡线主逻辑 */
 void LineWalking(void);

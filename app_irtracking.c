@@ -19,12 +19,14 @@
 
 /* ========== 直角弯四轮动力参数 ========== */
 /*
- * 内侧轮低速反转、外侧轮正转，形成带少量前进量的原地转向。
+ * 内侧轮快速反转、外侧轮正转，形成原地 pivot 转向。
+ * 内侧更快 → 减小前冲量，绕车中心旋转。
  * 单轮速度范围为 -1000 ~ 1000。
  */
-#define CORNER_OUTER_SPEED   600
-#define CORNER_INNER_SPEED  (-350)
-#define CORNER_HOLD_MS        30
+#define CORNER_OUTER_SPEED   500
+#define CORNER_INNER_SPEED  (-700)
+#define CORNER_SENSOR_MS      15    /* 传感器采样间隔 */
+#define CORNER_TIMEOUT_MS    800    /* 最大转向时间（安全兜底） */
 
 /*
  * 仅削弱中心附近的小误差修正。
@@ -38,8 +40,8 @@ int  pid_output_IRR = 0;       /* PID 输出 (传给电机控制) */
 u8   trun_flag = 0;            /* 转向标志 (预留) */
 
 /* ========== PID 变量 ========== */
-static float IRTrack_Integral = 0;   /* 积分累积 */
-static int8_t error_last = 0;        /* 上一次误差 */
+static int32_t IRTrack_Integral = 0;  /* 积分累积 (整数) */
+static int8_t  error_last       = 0;  /* 上一次误差 */
 
 /* ========== I2C 实例 ========== */
 /*
@@ -125,48 +127,98 @@ void deal_IRdata(u8 *x1, u8 *x2, u8 *x3, u8 *x4,
  * 输入: 偏差值 (actual_value)
  * 输出: 转向修正量
  *
- * 调试建议:
- *   如果巡线效果不好, 先将 KI、KD 置 0
- *   然后慢慢增加 KP, 最后再尝试加 KD
+ * 全部使用整数运算 — Cortex-M0+ 无硬件浮点,
+ * 整数 PID 省栈、省 flash、更快。
  */
-float PID_IR_Calc(int8_t actual_value)
+int32_t PID_IR_Calc(int8_t actual_value)
 {
-    float IRTrackTurn = 0;
-    int8_t error;
+    int32_t output;
+    int8_t  error;
+    int8_t  deriv;
 
     error = actual_value;
 
-    IRTrack_Integral += error;
+    IRTrack_Integral += (int32_t)error;
 
     /* 积分限幅 (防止积分饱和) */
     if (IRTrack_Integral >  5000)  IRTrack_Integral =  5000;
     if (IRTrack_Integral < -5000)  IRTrack_Integral = -5000;
 
-    /* 位置式 PID */
-    IRTrackTurn = error * IRTrack_Trun_KP
-                + IRTrack_Trun_KI * IRTrack_Integral
-                + (error - error_last) * IRTrack_Trun_KD;
+    deriv = error - error_last;
+
+    /* 位置式 PID — 纯整数 */
+    output = (int32_t)error          * (int32_t)IRTrack_Trun_KP
+           + (int32_t)IRTrack_Trun_KI * IRTrack_Integral
+           + (int32_t)deriv          * (int32_t)IRTrack_Trun_KD;
 
     error_last = error;
 
-    return IRTrackTurn;
+    return output;
 }
 
-/* ========== 直角弯直接四轮控制 ========== */
+/* ========== 直角弯自适应四轮控制 ========== */
+/*
+ * 不再使用固定时长盲转。
+ * 边转边读传感器，线回到中间区域立刻停止。
+ * 这样无论弯道角度大小，转弯量始终刚好，不会过头。
+ */
 static void IR_CornerTurnLeft(void)
 {
-    /* 左侧为内轮，右侧为外轮。 */
+    u8 x1, x2, x3, x4, x5, x6, x7, x8;
+    uint32_t elapsed = 0;
+
+    /* 左侧为内轮(反转)，右侧为外轮(正转) */
     Contrl_Speed(CORNER_INNER_SPEED, CORNER_INNER_SPEED,
                  CORNER_OUTER_SPEED, CORNER_OUTER_SPEED);
-    delay_ms(CORNER_HOLD_MS);
+
+    while (elapsed < CORNER_TIMEOUT_MS)
+    {
+        delay_ms(CORNER_SENSOR_MS);
+        elapsed += CORNER_SENSOR_MS;
+
+        deal_IRdata(&x1, &x2, &x3, &x4, &x5, &x6, &x7, &x8);
+
+        /*
+         * 退出条件: 极端模式消失，且中心附近有黑线。
+         * "极端模式消失" 说明车已经转过来了，
+         * "中心有黑线" 确保线已回到传感器中间区域。
+         */
+        if (!(x1 == 0 && x2 == 0 && x3 == 0 && x4 == 0
+           && x5 == 0 && x6 == 1 && x7 == 1 && x8 == 1))
+        {
+            if (x4 == 0 || x5 == 0)  /* 中心传感器看到黑线 */
+            {
+                break;
+            }
+        }
+    }
 }
 
 static void IR_CornerTurnRight(void)
 {
-    /* 左侧为外轮，右侧为内轮。 */
+    u8 x1, x2, x3, x4, x5, x6, x7, x8;
+    uint32_t elapsed = 0;
+
+    /* 左侧为外轮(正转)，右侧为内轮(反转) */
     Contrl_Speed(CORNER_OUTER_SPEED, CORNER_OUTER_SPEED,
                  CORNER_INNER_SPEED, CORNER_INNER_SPEED);
-    delay_ms(CORNER_HOLD_MS);
+
+    while (elapsed < CORNER_TIMEOUT_MS)
+    {
+        delay_ms(CORNER_SENSOR_MS);
+        elapsed += CORNER_SENSOR_MS;
+
+        deal_IRdata(&x1, &x2, &x3, &x4, &x5, &x6, &x7, &x8);
+
+        if (!(x1 == 1 && x2 == 1 && x3 == 1 && x4 == 0
+           && x5 == 0 && x6 == 0 && x7 == 0 && x8 == 0))
+        {
+            if (x4 == 0 || x5 == 0)
+            {
+                break;
+            }
+        }
+    }
 }
 
 /* ========== 巡线主逻辑 ========== */
@@ -278,7 +330,7 @@ void LineWalking(void)
     if (err < -20)  err = -20;
 
     /* 5. PID 计算 + 控制电机 */
-    pid_output_IRR = (int)(PID_IR_Calc(err));
+    pid_output_IRR = PID_IR_Calc(err);
 
     /*
      * 中心附近通常只会出现-2、0、+2的小误差。
