@@ -23,7 +23,7 @@ uint8_t send_buff[128];
  * 如果 SysConfig 里改了命名, 修改下面的宏
  */
 #ifndef MOTOR_UART_INST
-#define MOTOR_UART_INST        UART_2_INST
+#define MOTOR_UART_INST        UART_1_INST
 #endif
 
 /* ========== 发送原始数据 ========== */

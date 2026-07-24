@@ -34,14 +34,14 @@ Board.peripheral.swdioPin.$assign = "PA19";
 
 SYSCTL.clockTreeEn = true;
 
-UART1.$name                            = "UART_2";
-UART1.profile                          = "CONFIG_PROFILE_1";
-UART1.peripheral.$assign               = "UART1";
 UART1.targetBaudRate                   = 115200;
-UART1.uartClkSrc                       = "BUSCLK";
-UART1.ovsRate                          = "16";
 UART1.enableFIFO                       = true;
-UART1.enableInternalLoopback            = false;
+UART1.rxFifoThreshold                  = "DL_UART_RX_FIFO_LEVEL_ONE_ENTRY";
+UART1.enableDMARX                      = false;
+UART1.enableDMATX                      = false;
+UART1.enableInternalLoopback           = false;
+UART1.$name                            = "UART_1";
+UART1.peripheral.$assign               = "UART1";
 UART1.peripheral.rxPin.$assign         = "PB7";
 UART1.peripheral.txPin.$assign         = "PB6";
 UART1.txPinConfig.$name                = "ti_driverlib_gpio_GPIOPinGeneric2";
