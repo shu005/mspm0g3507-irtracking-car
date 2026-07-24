@@ -14,6 +14,7 @@ const I2C1          = I2C.addInstance();
 const SYSCTL        = scripting.addModule("/ti/driverlib/SYSCTL");
 const UART          = scripting.addModule("/ti/driverlib/UART", {}, false);
 const UART1         = UART.addInstance();
+const UART2         = UART.addInstance();
 const ProjectConfig = scripting.addModule("/ti/project_config/ProjectConfig");
 
 /**
@@ -53,5 +54,23 @@ UART1.rxPinConfig.$name                = "ti_driverlib_gpio_GPIOPinGeneric3";
 UART1.rxPinConfig.hideOutputInversion  = scripting.forceWrite(false);
 UART1.rxPinConfig.onlyInternalResistor = scripting.forceWrite(false);
 UART1.rxPinConfig.passedPeripheralType = scripting.forceWrite("Digital");
+
+UART2.targetBaudRate                   = 115200;
+UART2.$name                            = "UART_IMU";
+UART2.enableFIFO                       = true;
+UART2.enabledInterrupts                = ["RX"];
+UART2.rxFifoThreshold                  = "DL_UART_RX_FIFO_LEVEL_ONE_ENTRY";
+UART2.peripheral.$assign               = "UART3";
+UART2.peripheral.rxPin.$assign         = "PA25";
+UART2.peripheral.txPin.$assign         = "PA26";
+UART2.txPinConfig.$name                = "ti_driverlib_gpio_GPIOPinGeneric4";
+UART2.txPinConfig.direction            = scripting.forceWrite("OUTPUT");
+UART2.txPinConfig.hideOutputInversion  = scripting.forceWrite(false);
+UART2.txPinConfig.onlyInternalResistor = scripting.forceWrite(false);
+UART2.txPinConfig.passedPeripheralType = scripting.forceWrite("Digital");
+UART2.rxPinConfig.$name                = "ti_driverlib_gpio_GPIOPinGeneric5";
+UART2.rxPinConfig.hideOutputInversion  = scripting.forceWrite(false);
+UART2.rxPinConfig.onlyInternalResistor = scripting.forceWrite(false);
+UART2.rxPinConfig.passedPeripheralType = scripting.forceWrite("Digital");
 
 ProjectConfig.deviceSpin = "MSPM0G3507";
