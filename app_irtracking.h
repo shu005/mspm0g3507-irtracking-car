@@ -7,6 +7,7 @@
 #define APP_IRTRACKING_H
 
 #include "app_common.h"
+#include <stdbool.h>
 
 /* ========== 巡线 PID 参数 (可调) ========== */
 #define IRTrack_Trun_KP   (280)
@@ -36,10 +37,22 @@
 #define IR_I2C_DEVICE_ADDR  0x12
 #define IR_I2C_REG_DATA     0x30
 
-uint8_t IRI2C_ReadByte(uint8_t addr);
+/*
+ * 返回 true 表示读取成功，*data 是有效数据。
+ * 返回 false 表示通信失败，此时禁止使用 *data。
+ */
+bool IRI2C_ReadByte(uint8_t reg, uint8_t *data);
 
-void deal_IRdata(u8 *x1, u8 *x2, u8 *x3, u8 *x4,
+/*
+ * 返回 true 表示八路数据有效。
+ * 返回 false 表示 I2C 读取失败，x1~x8 保持不变。
+ */
+bool deal_IRdata(u8 *x1, u8 *x2, u8 *x3, u8 *x4,
                  u8 *x5, u8 *x6, u8 *x7, u8 *x8);
+
+/* 可在 CCS Expressions / Watch 中观察的 I2C 诊断量。 */
+extern volatile uint32_t g_ir_i2c_error_total;
+extern volatile uint8_t  g_ir_i2c_fail_streak;
 
 int32_t PID_IR_Calc(int8_t actual_value);
 

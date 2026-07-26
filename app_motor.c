@@ -310,7 +310,7 @@ void send_motor_PID(float Kp,
     len = snprintf(
         cmd,
         sizeof(cmd),
-        "$motorpid:%.1f,%.1f,%.1f#",
+        "$MPID:%.2f,%.2f,%.2f#",
         Kp,
         Ki,
         Kd
