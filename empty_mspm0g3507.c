@@ -8,7 +8,11 @@
 #include "app_irtracking.h"
 #include "app_imu.h"
 
-#define CONTROL_LOOP_MS              40U
+/*
+ * 与 app_irtracking.c 的非阻塞状态机共用同一个周期定义。
+ * 不要再单独写 40U，否则状态机时间和真实调用周期会不一致。
+ */
+#define CONTROL_LOOP_MS              IR_CONTROL_LOOP_MS
 #define IMU_CALIBRATION_SAMPLES      40U
 #define IMU_CALIBRATION_TIMEOUT_MS   9000U
 
@@ -66,7 +70,10 @@ int main(void)
     Contrl_Speed(0, 0, 0, 0);
     App_DelayWithIMU(1000U);
 
-    /* Default IMU output is 25 Hz, so a 40 ms control period matches it. */
+    /*
+     * IMU 默认 25 Hz 输出并不要求控制环也只能运行在 25 Hz。
+     * UART 中断会缓存字节；10 ms 调用一次解析和红外状态机即可。
+     */
     while (1)
     {
         LineWalking();
