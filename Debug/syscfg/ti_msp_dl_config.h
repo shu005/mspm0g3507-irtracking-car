@@ -126,6 +126,22 @@ extern "C" {
 #define UART_IMU_BAUD_RATE                                              (115200)
 #define UART_IMU_IBRD_32_MHZ_115200_BAUD                                    (17)
 #define UART_IMU_FBRD_32_MHZ_115200_BAUD                                    (23)
+/* Defines for UART_K230 */
+#define UART_K230_INST                                                     UART2
+#define UART_K230_INST_FREQUENCY                                        32000000
+#define UART_K230_INST_IRQHandler                               UART2_IRQHandler
+#define UART_K230_INST_INT_IRQN                                   UART2_INT_IRQn
+#define GPIO_UART_K230_RX_PORT                                             GPIOA
+#define GPIO_UART_K230_TX_PORT                                             GPIOA
+#define GPIO_UART_K230_RX_PIN                                     DL_GPIO_PIN_22
+#define GPIO_UART_K230_TX_PIN                                     DL_GPIO_PIN_21
+#define GPIO_UART_K230_IOMUX_RX                                  (IOMUX_PINCM47)
+#define GPIO_UART_K230_IOMUX_TX                                  (IOMUX_PINCM46)
+#define GPIO_UART_K230_IOMUX_RX_FUNC                   IOMUX_PINCM47_PF_UART2_RX
+#define GPIO_UART_K230_IOMUX_TX_FUNC                   IOMUX_PINCM46_PF_UART2_TX
+#define UART_K230_BAUD_RATE                                             (115200)
+#define UART_K230_IBRD_32_MHZ_115200_BAUD                                   (17)
+#define UART_K230_FBRD_32_MHZ_115200_BAUD                                   (23)
 
 
 
@@ -139,6 +155,7 @@ void SYSCFG_DL_SYSCTL_init(void);
 void SYSCFG_DL_I2C_0_init(void);
 void SYSCFG_DL_UART_1_init(void);
 void SYSCFG_DL_UART_IMU_init(void);
+void SYSCFG_DL_UART_K230_init(void);
 
 bool SYSCFG_DL_saveConfiguration(void);
 bool SYSCFG_DL_restoreConfiguration(void);

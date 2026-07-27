@@ -14,8 +14,8 @@
 #include "app_imu.h"
 
 /* ========== 直角弯四轮动力参数 ========== */
-#define CORNER_OUTER_SPEED   500
-#define CORNER_INNER_SPEED  (-700)
+#define CORNER_OUTER_SPEED   400
+#define CORNER_INNER_SPEED  (-400)
 #define CORNER_SENSOR_MS      15
 #define CORNER_TIMEOUT_MS    800
 
@@ -366,10 +366,12 @@ static void IR_CornerTurnLeft(void)
             return;
         }
 
-        if (!(x1 == 0 && x2 == 0 && x3 == 0 && x4 == 0 &&
-              x5 == 0 && x6 == 1 && x7 == 1 && x8 == 1))
+        /*
+         * 退出条件: 左侧4不再全黑(极端左偏已减轻), 且 X2~X7 有黑线。
+         */
+        if (!(x1 == 0 && x2 == 0 && x3 == 0 && x4 == 0))
         {
-            if (x4 == 0 || x5 == 0)
+            if (x2 == 0 || x3 == 0 || x4 == 0 || x5 == 0 || x6 == 0 || x7 == 0)
             {
                 break;
             }
@@ -404,10 +406,12 @@ static void IR_CornerTurnRight(void)
             return;
         }
 
-        if (!(x1 == 1 && x2 == 1 && x3 == 1 && x4 == 0 &&
-              x5 == 0 && x6 == 0 && x7 == 0 && x8 == 0))
+        /*
+         * 退出条件: 右侧4不再全黑(极端右偏已减轻), 且 X2~X7 有黑线。
+         */
+        if (!(x5 == 0 && x6 == 0 && x7 == 0 && x8 == 0))
         {
-            if (x4 == 0 || x5 == 0)
+            if (x2 == 0 || x3 == 0 || x4 == 0 || x5 == 0 || x6 == 0 || x7 == 0)
             {
                 break;
             }
@@ -464,12 +468,16 @@ void LineWalking(void)
     else if (x1 == 0 && x2 == 0 && x3 == 0 && x4 == 0 &&
              x5 == 0 && x6 == 0 && x7 == 1 && x8 == 1)
     {
-        err = -12;
+        err = -15;
+        IR_CornerTurnLeft();
+        return;
     }
     else if (x1 == 1 && x2 == 1 && x3 == 0 && x4 == 0 &&
              x5 == 0 && x6 == 0 && x7 == 0 && x8 == 0)
     {
-        err = 12;
+        err = 15;
+        IR_CornerTurnRight();
+        return;
     }
     else if (x1 == 0 && x8 == 1 && black_count >= 4)
     {
