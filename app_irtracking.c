@@ -15,20 +15,20 @@
  *   ...
  *   AD2 AD1 AD0 = 111 -> CH8
  *
- * SysConfig performs IOMUX and direction initialization. This file only
- * switches the three address GPIOs and reads OUT.
+ * SysConfig performs IOMUX and direction initialization. The scan timing and
+ * active level follow the manufacturer MSPM0 reference implementation.
  */
 
 #include "app_irtracking.h"
 #include "app_motor.h"
 #include "app_imu.h"
 
-/* ========== Fixed hardware mapping ========== */
-#define IR_HW_PORT      GPIOA
-#define IR_AD0_PIN      DL_GPIO_PIN_14
-#define IR_AD1_PIN      DL_GPIO_PIN_15
-#define IR_AD2_PIN      DL_GPIO_PIN_16
-#define IR_OUT_PIN      DL_GPIO_PIN_17
+/* ========== SysConfig-generated hardware mapping ========== */
+#define IR_HW_PORT      IR_GPIO_PORT
+#define IR_AD0_PIN      IR_GPIO_IR_AD0_PIN
+#define IR_AD1_PIN      IR_GPIO_IR_AD1_PIN
+#define IR_AD2_PIN      IR_GPIO_IR_AD2_PIN
+#define IR_OUT_PIN      IR_GPIO_IR_OUT_PIN
 
 /* ========== Right-angle corner parameters ========== */
 #define CORNER_OUTER_SPEED   400

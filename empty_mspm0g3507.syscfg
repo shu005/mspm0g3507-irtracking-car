@@ -81,7 +81,7 @@ UART3.targetBaudRate                   = 115200;
 UART3.enabledInterrupts                = ["RX"];
 UART3.peripheral.$assign               = "UART2";
 UART3.peripheral.rxPin.$assign         = "PA22";
-UART3.peripheral.txPin.$assign         = "PB15";
+UART3.peripheral.txPin.$assign         = "PA21";
 UART3.txPinConfig.direction            = scripting.forceWrite("OUTPUT");
 UART3.txPinConfig.hideOutputInversion  = scripting.forceWrite(false);
 UART3.txPinConfig.onlyInternalResistor = scripting.forceWrite(false);
@@ -95,8 +95,8 @@ UART3.rxPinConfig.$name                = "ti_driverlib_gpio_GPIOPinGeneric7";
 ProjectConfig.deviceSpin = "MSPM0G3507";
 
 /**
- * Pinmux solution for unlocked pins/peripherals. This ensures that minor changes to the automatic solver in a future
- * version of the tool will not impact the pinmux you originally saw.  These lines can be completely deleted in order to
- * re-solve from scratch.
+ * Pinmux solution for unlocked pins/peripherals.
  */
-UART2.peripheral.$suggestSolution = "UART3";
+UART2.peripheral.$suggestSolution        = "UART3";
+UART3.peripheral.rxPin.$suggestSolution  = "PA22";
+UART3.peripheral.txPin.$suggestSolution  = "PA21";

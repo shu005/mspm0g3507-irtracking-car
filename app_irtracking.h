@@ -27,13 +27,14 @@
 #define IRR_SPEED           300
 #define IR_CONTROL_LOOP_MS   10U
 
-/* ========== New multiplexed IR module configuration ========== */
+/* ========== Multiplexed grayscale module configuration ========== */
 /*
- * Electrical level produced by OUT when the selected sensor sees black.
- * Keep 0U when black -> low and white -> high.
- * Change to 1U when black -> high and white -> low.
+ * The manufacturer's MSPM0 car example defines ACTIVE_LEVEL as 1:
+ * a sensor detecting the black line returns a high level.
+ * deal_IRdata() normalizes this to the old control convention:
+ * 0 = black and 1 = white.
  */
-#define IR_BLACK_LEVEL                 0U
+#define IR_BLACK_LEVEL                 1U
 
 /*
  * Physical direction of the module after installation:
@@ -42,12 +43,16 @@
  */
 #define IR_CH1_IS_LEFTMOST             1U
 
-/* Address switching settle time. 64 CPU cycles is about 2 us at 32 MHz. */
-#define IR_MUX_SETTLE_CYCLES          64U
+/*
+ * The manufacturer's MSPM0 read example waits 50 us after changing AD2:AD0
+ * before sampling OUT. At the current 32 MHz CPU clock this is 1600 cycles.
+ */
+#define IR_MUX_SETTLE_US              50U
+#define IR_MUX_SETTLE_CYCLES          ((CPUCLK_FREQ / 1000000U) * IR_MUX_SETTLE_US)
 
 /* Odd-number majority sampling suppresses a single transient on OUT. */
 #define IR_GPIO_SAMPLE_COUNT           3U
-#define IR_GPIO_SAMPLE_GAP_CYCLES      8U
+#define IR_GPIO_SAMPLE_GAP_CYCLES     16U
 
 /* ========== IMU angular-rate damping parameters ========== */
 /* 1 = enabled; 0 = pure IR tracking. */

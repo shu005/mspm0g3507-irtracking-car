@@ -24,22 +24,30 @@
 #define APP_MODE_LINE_TRACKING       1U
 #define APP_MODE_BALL_TRACKING       2U
 
+/* 电机自检配置 */
+#define MOTOR_SELF_TEST_ENABLE       1U
+#define MOTOR_SELF_TEST_SPEED        350
+#define MOTOR_DRIVER_BOOT_DELAY_MS   1500U
+
 /*
- * 初始使用监视模式：
- * 电机保持停止，只接收K230数据。
- *
+ * CCS Expressions中可观察：
+ * 0 = 尚未进入main
+ * 1 = SysConfig初始化完成
+ * 2 = 电机UART初始化完成
+ * 3 = 正在执行电机自检
+ * 4 = 电机自检完成
+ * 5 = IMU/K230初始化完成
+ * 6 = IMU校准阶段结束并进入主循环
+ */
+volatile uint8_t g_startup_stage = 0U;
+
+/*
  * 可以在CCS Expressions中直接修改g_app_mode：
  *   0：停车监视
  *   1：红外循迹
  *   2：钢球跟踪
  */
- volatile uint8_t g_app_mode = APP_MODE_LINE_TRACKING;
-
-/*
- * 接入K230期间先关闭电机自检，避免上电突然运动。
- * 全部调通后可改为1。
- */
-#define MOTOR_SELF_TEST_ENABLE       1U
+volatile uint8_t g_app_mode = APP_MODE_LINE_TRACKING;
 
 static void App_DelayWithServices(uint32_t delay_time_ms)
 {
@@ -68,28 +76,67 @@ static void App_DelayWithServices(uint32_t delay_time_ms)
     }
 }
 
+/*
+ * 自检必须放在IMU/K230/循迹初始化之前。
+ * 这样即使后续模块或传感器接线有问题，也不会影响电机链路验证。
+ */
+static void App_MotorSelfTest(void)
+{
+    delay_ms(MOTOR_DRIVER_BOOT_DELAY_MS);
+
+    Contrl_Speed(0, 0, 0, 0);
+    delay_ms(100U);
+
+    Contrl_Speed(MOTOR_SELF_TEST_SPEED,
+                 MOTOR_SELF_TEST_SPEED,
+                 MOTOR_SELF_TEST_SPEED,
+                 MOTOR_SELF_TEST_SPEED);
+    delay_ms(1500U);
+
+    Contrl_Speed(0, 0, 0, 0);
+    delay_ms(500U);
+
+    Contrl_Speed(-MOTOR_SELF_TEST_SPEED,
+                 -MOTOR_SELF_TEST_SPEED,
+                 -MOTOR_SELF_TEST_SPEED,
+                 -MOTOR_SELF_TEST_SPEED);
+    delay_ms(1000U);
+
+    Contrl_Speed(0, 0, 0, 0);
+    delay_ms(500U);
+}
+
 int main(void)
 {
     uint32_t calibration_elapsed_ms = 0U;
 
-    /* SysConfig初始化UART、I2C和引脚 */
+    /* SysConfig初始化UART和GPIO引脚。 */
     SYSCFG_DL_init();
+    g_startup_stage = 1U;
 
+    /* 电机驱动板UART必须最先初始化。 */
     USART_Init();
+    g_startup_stage = 2U;
+
+#if MOTOR_SELF_TEST_ENABLE
+    g_startup_stage = 3U;
+    App_MotorSelfTest();
+    g_startup_stage = 4U;
+#endif
+
+    /* 自检完成后再启动其他通信和控制模块。 */
     IMU_Init();
     K230_Init();
     BallControl_Init();
+    g_startup_stage = 5U;
 
-    /* IMU校准期间小车必须静止 */
+    /* IMU校准期间小车必须静止。 */
     Contrl_Speed(0, 0, 0, 0);
 
-    IMU_StartGyroCalibration(
-        IMU_CALIBRATION_SAMPLES
-    );
+    IMU_StartGyroCalibration(IMU_CALIBRATION_SAMPLES);
 
     while (!IMU_IsCalibrated() &&
-           calibration_elapsed_ms <
-           IMU_CALIBRATION_TIMEOUT_MS)
+           calibration_elapsed_ms < IMU_CALIBRATION_TIMEOUT_MS)
     {
         App_DelayWithServices(5U);
         calibration_elapsed_ms += 5U;
@@ -97,54 +144,25 @@ int main(void)
 
     Contrl_Speed(0, 0, 0, 0);
     App_DelayWithServices(500U);
-
-#if MOTOR_SELF_TEST_ENABLE
-
-    Contrl_Speed(200, 200, 200, 200);
-    App_DelayWithServices(2000U);
-
-    Contrl_Speed(-200, -200, -200, -200);
-    App_DelayWithServices(1000U);
-
-    Contrl_Speed(0, 0, 0, 0);
-    App_DelayWithServices(1000U);
-
-#endif
+    g_startup_stage = 6U;
 
     while (1)
     {
-        /*
-         * 先解析本周期收到的通信数据，
-         * 再执行对应控制模块。
-         */
         IMU_Process();
         K230_Process();
 
         switch (g_app_mode)
         {
             case APP_MODE_LINE_TRACKING:
-
-                /*
-                 * 只有循迹模块可以在该模式下发送电机指令。
-                 */
                 LineWalking();
                 break;
 
             case APP_MODE_BALL_TRACKING:
-
-                /*
-                 * 只有钢球控制模块可以在该模式下发送电机指令。
-                 */
                 BallControl_Process();
                 break;
 
             case APP_MODE_MONITOR:
             default:
-
-                /*
-                 * 通信测试模式：
-                 * K230正常接收，但小车绝不运动。
-                 */
                 Contrl_Speed(0, 0, 0, 0);
                 break;
         }
