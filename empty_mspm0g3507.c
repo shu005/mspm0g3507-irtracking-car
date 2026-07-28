@@ -33,13 +33,13 @@
  *   1：红外循迹
  *   2：钢球跟踪
  */
- volatile uint8_t g_app_mode = APP_MODE_BALL_TRACKING;
+ volatile uint8_t g_app_mode = APP_MODE_LINE_TRACKING;
 
 /*
  * 接入K230期间先关闭电机自检，避免上电突然运动。
  * 全部调通后可改为1。
  */
-#define MOTOR_SELF_TEST_ENABLE       0U
+#define MOTOR_SELF_TEST_ENABLE       1U
 
 static void App_DelayWithServices(uint32_t delay_time_ms)
 {
