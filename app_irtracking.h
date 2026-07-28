@@ -1,6 +1,15 @@
 /*
- * app_irtracking.h - 八路巡线模块接口
- * 8-channel IR tracking module interface
+ * app_irtracking.h - 8-channel GPIO-multiplexed IR tracking module interface
+ *
+ * Hardware:
+ *   AD0 -> PA14
+ *   AD1 -> PA15
+ *   AD2 -> PA16
+ *   OUT -> PA17
+ *
+ * The module uses AD2:AD0 to select CH1~CH8 and exposes the selected
+ * channel as a digital level on OUT. EN is pulled low on the module and
+ * does not need an MCU pin.
  */
 
 #ifndef APP_IRTRACKING_H
@@ -9,54 +18,93 @@
 #include "app_common.h"
 #include <stdbool.h>
 
-/* ========== 巡线 PID 参数 (可调) ========== */
+/* ========== Line tracking PID parameters ========== */
 #define IRTrack_Trun_KP   (280)
 #define IRTrack_Trun_KI   (0)
 #define IRTrack_Trun_KD   (150)
 
-/* 巡线速度 (0~1000) */
-#define IRR_SPEED          300
-#define IR_CONTROL_LOOP_MS  10U
+/* Forward speed and control period. */
+#define IRR_SPEED           300
+#define IR_CONTROL_LOOP_MS   10U
 
-/* ========== IMU 角速度阻尼参数 ========== */
-/* 1 = 启用；0 = 保留纯红外循迹。 */
-#define IMU_ASSIST_ENABLE             1
+/* ========== New multiplexed IR module configuration ========== */
+/*
+ * Electrical level produced by OUT when the selected sensor sees black.
+ * Keep 0U when black -> low and white -> high.
+ * Change to 1U when black -> high and white -> low.
+ */
+#define IR_BLACK_LEVEL                 0U
 
-/* 当前 Motion_Car_Control 中正 Vz 表示右转。
- * 常见安装方式为 IMU 平放、Z 轴朝上，此时右转的原始 gyro Z 通常为负，
- * 因此默认乘 -1 将其转换为“右转为正”。
- * 若实车加 IMU 后摆动反而增大，把 -1.0f 改成 +1.0f。 */
+/*
+ * Physical direction of the module after installation:
+ *   1U: CH1/X1 is the leftmost sensor when looking in the car's forward direction.
+ *   0U: CH1/X1 is the rightmost sensor; software reverses the channel order.
+ */
+#define IR_CH1_IS_LEFTMOST             1U
+
+/* Address switching settle time. 64 CPU cycles is about 2 us at 32 MHz. */
+#define IR_MUX_SETTLE_CYCLES          64U
+
+/* Odd-number majority sampling suppresses a single transient on OUT. */
+#define IR_GPIO_SAMPLE_COUNT           3U
+#define IR_GPIO_SAMPLE_GAP_CYCLES      8U
+
+/* ========== IMU angular-rate damping parameters ========== */
+/* 1 = enabled; 0 = pure IR tracking. */
+#define IMU_ASSIST_ENABLE              1
+
+/* Motion_Car_Control uses positive Vz for a right turn.
+ * With a common flat installation, raw gyro Z is often negative on a
+ * right turn, so -1 converts it to the motor-control convention.
+ * If oscillation becomes worse after enabling IMU, change to +1.0f. */
 #define IMU_GYRO_Z_SIGN              (-1.0f)
 
-/* 小偏差/出弯阶段使用较强阻尼，大偏差入弯阶段使用较弱阻尼。 */
 #define IMU_DAMP_GAIN_CENTER           5.0f
 #define IMU_DAMP_GAIN_TURN             2.0f
 #define IMU_DAMP_FULL_GAIN_ERROR       6
 #define IMU_DAMP_OUTPUT_LIMIT          800
 
-/* ========== I2C 配置 ========== */
-#define IR_I2C_DEVICE_ADDR  0x12
-#define IR_I2C_REG_DATA     0x30
+/* ========== Debug variables for CCS Expressions / Watch ========== */
+/* Electrical levels returned by the module, X1 at bit7 and X8 at bit0. */
+extern volatile uint8_t g_ir_raw_data;
+
+/* Normalized legacy format: 0 = black, 1 = white; X1 at bit7. */
+extern volatile uint8_t g_ir_line_data;
+
+/* Convenience mask: 1 = black, 0 = white; X1 at bit7. */
+extern volatile uint8_t g_ir_black_mask;
+
+/* Total number of completed 8-channel scans. */
+extern volatile uint32_t g_ir_scan_count;
+
+/* Last physical multiplexer channel selected, range 0~7. */
+extern volatile uint8_t g_ir_last_channel;
+
+extern int pid_output_IRR;
+extern u8 trun_flag;
+
+/* Select physical CH1~CH8 using channel values 0~7. */
+void IR_SelectChannel(uint8_t channel);
+
+/* Read one physical channel as its raw electrical level (0 or 1). */
+uint8_t IR_ReadChannelRaw(uint8_t channel);
 
 /*
- * 返回 true 表示读取成功，*data 是有效数据。
- * 返回 false 表示通信失败，此时禁止使用 *data。
+ * Scan all sensors and return raw electrical levels.
+ * The returned bit order is always logical left-to-right:
+ *   bit7 = X1/leftmost, ... bit0 = X8/rightmost.
  */
-bool IRI2C_ReadByte(uint8_t reg, uint8_t *data);
+uint8_t IR_ReadAllRaw(void);
 
 /*
- * 返回 true 表示八路数据有效。
- * 返回 false 表示 I2C 读取失败，x1~x8 保持不变。
+ * Read and normalize all eight channels.
+ * Outputs always use the legacy convention required by the existing
+ * control logic: 0 = black, 1 = white.
  */
 bool deal_IRdata(u8 *x1, u8 *x2, u8 *x3, u8 *x4,
                  u8 *x5, u8 *x6, u8 *x7, u8 *x8);
 
-/* 可在 CCS Expressions / Watch 中观察的 I2C 诊断量。 */
-extern volatile uint32_t g_ir_i2c_error_total;
-extern volatile uint8_t  g_ir_i2c_fail_streak;
-
 int32_t PID_IR_Calc(int8_t actual_value);
-
 void LineWalking(void);
 
 #endif /* APP_IRTRACKING_H */

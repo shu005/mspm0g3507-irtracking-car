@@ -78,22 +78,6 @@ extern "C" {
 
 
 
-
-/* Defines for I2C_0 */
-#define I2C_0_INST                                                          I2C1
-#define I2C_0_INST_IRQHandler                                    I2C1_IRQHandler
-#define I2C_0_INST_INT_IRQN                                        I2C1_INT_IRQn
-#define I2C_0_BUS_SPEED_HZ                                                100000
-#define GPIO_I2C_0_SDA_PORT                                                GPIOA
-#define GPIO_I2C_0_SDA_PIN                                        DL_GPIO_PIN_16
-#define GPIO_I2C_0_IOMUX_SDA                                     (IOMUX_PINCM38)
-#define GPIO_I2C_0_IOMUX_SDA_FUNC                      IOMUX_PINCM38_PF_I2C1_SDA
-#define GPIO_I2C_0_SCL_PORT                                                GPIOA
-#define GPIO_I2C_0_SCL_PIN                                        DL_GPIO_PIN_15
-#define GPIO_I2C_0_IOMUX_SCL                                     (IOMUX_PINCM37)
-#define GPIO_I2C_0_IOMUX_SCL_FUNC                      IOMUX_PINCM37_PF_I2C1_SCL
-
-
 /* Defines for UART_1 */
 #define UART_1_INST                                                        UART1
 #define UART_1_INST_FREQUENCY                                           32000000
@@ -132,18 +116,36 @@ extern "C" {
 #define UART_K230_INST_IRQHandler                               UART2_IRQHandler
 #define UART_K230_INST_INT_IRQN                                   UART2_INT_IRQn
 #define GPIO_UART_K230_RX_PORT                                             GPIOA
-#define GPIO_UART_K230_TX_PORT                                             GPIOA
+#define GPIO_UART_K230_TX_PORT                                             GPIOB
 #define GPIO_UART_K230_RX_PIN                                     DL_GPIO_PIN_22
-#define GPIO_UART_K230_TX_PIN                                     DL_GPIO_PIN_21
+#define GPIO_UART_K230_TX_PIN                                     DL_GPIO_PIN_15
 #define GPIO_UART_K230_IOMUX_RX                                  (IOMUX_PINCM47)
-#define GPIO_UART_K230_IOMUX_TX                                  (IOMUX_PINCM46)
+#define GPIO_UART_K230_IOMUX_TX                                  (IOMUX_PINCM32)
 #define GPIO_UART_K230_IOMUX_RX_FUNC                   IOMUX_PINCM47_PF_UART2_RX
-#define GPIO_UART_K230_IOMUX_TX_FUNC                   IOMUX_PINCM46_PF_UART2_TX
+#define GPIO_UART_K230_IOMUX_TX_FUNC                   IOMUX_PINCM32_PF_UART2_TX
 #define UART_K230_BAUD_RATE                                             (115200)
 #define UART_K230_IBRD_32_MHZ_115200_BAUD                                   (17)
 #define UART_K230_FBRD_32_MHZ_115200_BAUD                                   (23)
 
 
+
+
+
+/* Port definition for Pin Group IR_GPIO */
+#define IR_GPIO_PORT                                                     (GPIOA)
+
+/* Defines for IR_AD0: GPIOA.14 with pinCMx 36 on package pin 7 */
+#define IR_GPIO_IR_AD0_PIN                                      (DL_GPIO_PIN_14)
+#define IR_GPIO_IR_AD0_IOMUX                                     (IOMUX_PINCM36)
+/* Defines for IR_AD1: GPIOA.15 with pinCMx 37 on package pin 8 */
+#define IR_GPIO_IR_AD1_PIN                                      (DL_GPIO_PIN_15)
+#define IR_GPIO_IR_AD1_IOMUX                                     (IOMUX_PINCM37)
+/* Defines for IR_AD2: GPIOA.16 with pinCMx 38 on package pin 9 */
+#define IR_GPIO_IR_AD2_PIN                                      (DL_GPIO_PIN_16)
+#define IR_GPIO_IR_AD2_IOMUX                                     (IOMUX_PINCM38)
+/* Defines for IR_OUT: GPIOA.17 with pinCMx 39 on package pin 10 */
+#define IR_GPIO_IR_OUT_PIN                                      (DL_GPIO_PIN_17)
+#define IR_GPIO_IR_OUT_IOMUX                                     (IOMUX_PINCM39)
 
 
 /* clang-format on */
@@ -152,10 +154,10 @@ void SYSCFG_DL_init(void);
 void SYSCFG_DL_initPower(void);
 void SYSCFG_DL_GPIO_init(void);
 void SYSCFG_DL_SYSCTL_init(void);
-void SYSCFG_DL_I2C_0_init(void);
 void SYSCFG_DL_UART_1_init(void);
 void SYSCFG_DL_UART_IMU_init(void);
 void SYSCFG_DL_UART_K230_init(void);
+
 
 bool SYSCFG_DL_saveConfiguration(void);
 bool SYSCFG_DL_restoreConfiguration(void);

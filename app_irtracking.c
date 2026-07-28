@@ -1,220 +1,147 @@
 /*
- * app_irtracking.c - 八路巡线模块实现
- * 8-channel IR line tracking implementation
+ * app_irtracking.c - 8-channel GPIO-multiplexed IR tracking implementation
  *
- * 接线:
- *   IR模块 SCL -> PA15
- *   IR模块 SDA -> PA16
- *   IR模块 5V  -> 5V
- *   IR模块 GND -> GND
+ * Hardware connection:
+ *   IR AD0 -> MSPM0 PA14
+ *   IR AD1 -> MSPM0 PA15
+ *   IR AD2 -> MSPM0 PA16
+ *   IR OUT -> MSPM0 PA17
+ *   IR 5V  -> 5V
+ *   IR GND -> GND
+ *
+ * Module truth table:
+ *   AD2 AD1 AD0 = 000 -> CH1
+ *   AD2 AD1 AD0 = 001 -> CH2
+ *   ...
+ *   AD2 AD1 AD0 = 111 -> CH8
+ *
+ * SysConfig performs IOMUX and direction initialization. This file only
+ * switches the three address GPIOs and reads OUT.
  */
 
 #include "app_irtracking.h"
 #include "app_motor.h"
 #include "app_imu.h"
 
-/* ========== 直角弯四轮动力参数 ========== */
+/* ========== Fixed hardware mapping ========== */
+#define IR_HW_PORT      GPIOA
+#define IR_AD0_PIN      DL_GPIO_PIN_14
+#define IR_AD1_PIN      DL_GPIO_PIN_15
+#define IR_AD2_PIN      DL_GPIO_PIN_16
+#define IR_OUT_PIN      DL_GPIO_PIN_17
+
+/* ========== Right-angle corner parameters ========== */
 #define CORNER_OUTER_SPEED   400
 #define CORNER_INNER_SPEED  (-400)
-#define CORNER_SENSOR_MS      15
-#define CORNER_TIMEOUT_MS    800
+#define CORNER_SENSOR_MS      15U
+#define CORNER_TIMEOUT_MS    800U
 
-/* 中心附近仅保留原 PID 输出的 40%。 */
+/* Keep only 40% of PID output near the center. */
 #define CENTER_ERROR_RANGE       2
 #define CENTER_OUTPUT_PERCENT   40
-
-/* ========== I2C 安全参数 ========== */
-/*
- * 轮询超时次数。该值不是毫秒，而是 while 循环的最大次数。
- * 用于防止红外模块掉线或总线异常时程序永久卡死。
- */
-#define IR_I2C_TIMEOUT              100000U
-
-/*
- * 普通循迹连续读取失败 2 次后停车。
- * 若希望任意一次失败都立即停车，可改为 1U。
- */
-#define I2C_FAIL_STOP_COUNT              2U
-
-/*
- * TI 官方 I2C 轮询示例要求：启动传输后先等待至少几个 I2C
- * 功能时钟周期，再读取 BUSY/IDLE 状态（I2C_ERR_13 规避）。
- * 当前工程为 32MHz，100 个 CPU 周期留有足够余量。
- */
-#define IR_I2C_START_DELAY_CYCLES      100U
 
 int pid_output_IRR = 0;
 u8  trun_flag = 0;
 
-/*
- * 可在 CCS Expressions / Watch 中观察：
- * g_ir_i2c_error_total：上电以来 I2C 读取失败总次数
- * g_ir_i2c_fail_streak：当前连续失败次数
- */
-volatile uint32_t g_ir_i2c_error_total = 0U;
-volatile uint8_t  g_ir_i2c_fail_streak = 0U;
+volatile uint8_t  g_ir_raw_data    = 0xFFU;
+volatile uint8_t  g_ir_line_data   = 0xFFU;
+volatile uint8_t  g_ir_black_mask  = 0x00U;
+volatile uint32_t g_ir_scan_count  = 0U;
+volatile uint8_t  g_ir_last_channel = 0U;
 
 static int32_t IRTrack_Integral = 0;
 static int8_t  error_last = 0;
 
-#ifndef I2C_IR_INST
-#define I2C_IR_INST  I2C_0_INST
-#endif
-
-static bool IR_I2C_WaitIdle(void);
-static void IR_I2C_AbortTransfer(void);
 static void IR_ResetPIDState(void);
-static void IR_RecordI2CFailure(bool stop_immediately);
 static int32_t IR_ApplyIMUAssist(int32_t ir_output, int8_t error);
 static void IR_CornerTurnLeft(void);
 static void IR_CornerTurnRight(void);
 
-/*
- * 等待 I2C 控制器和总线都回到空闲状态。
- * 等待期间同时检测控制器错误和仲裁丢失。
- */
-static bool IR_I2C_WaitIdle(void)
+static void IR_WriteAddressPin(uint32_t pin, bool high)
 {
-    uint32_t timeout = IR_I2C_TIMEOUT;
-
-    while (timeout > 0U)
+    if (high)
     {
-        uint32_t status = DL_I2C_getControllerStatus(I2C_IR_INST);
-
-        if ((status & (DL_I2C_CONTROLLER_STATUS_ERROR |
-                       DL_I2C_CONTROLLER_STATUS_ARBITRATION_LOST)) != 0U)
-        {
-            return false;
-        }
-
-        if (((status & DL_I2C_CONTROLLER_STATUS_IDLE) != 0U) &&
-            ((status & DL_I2C_CONTROLLER_STATUS_BUSY_BUS) == 0U))
-        {
-            return true;
-        }
-
-        timeout--;
+        DL_GPIO_setPins(IR_HW_PORT, pin);
     }
-
-    return false;
+    else
+    {
+        DL_GPIO_clearPins(IR_HW_PORT, pin);
+    }
 }
 
-/*
- * 中止当前控制器传输并清空 FIFO。
- * 这里只重置 I2C 传输状态，不重置整个 I2C 外设，
- * 因此不需要重新执行 SysConfig 初始化。
- */
-static void IR_I2C_AbortTransfer(void)
+void IR_SelectChannel(uint8_t channel)
 {
-    DL_I2C_resetControllerTransfer(I2C_IR_INST);
-    DL_I2C_flushControllerTXFIFO(I2C_IR_INST);
-    DL_I2C_flushControllerRXFIFO(I2C_IR_INST);
+    channel &= 0x07U;
+
+    IR_WriteAddressPin(IR_AD0_PIN, (channel & 0x01U) != 0U);
+    IR_WriteAddressPin(IR_AD1_PIN, (channel & 0x02U) != 0U);
+    IR_WriteAddressPin(IR_AD2_PIN, (channel & 0x04U) != 0U);
+
+    g_ir_last_channel = channel;
+
+    /* Allow the analog switch/comparator output to settle. */
+    delay_cycles(IR_MUX_SETTLE_CYCLES);
 }
 
-/*
- * 安全读取一个红外模块寄存器。
- *
- * 返回 true：
- *   通信成功，*data 为真实传感器数据；即使 *data == 0xFF，
- *   也表示合法的“八路全白”数据。
- *
- * 返回 false：
- *   通信超时、总线错误或仲裁丢失；此时禁止使用 *data。
- */
-bool IRI2C_ReadByte(uint8_t reg, uint8_t *data)
+uint8_t IR_ReadChannelRaw(uint8_t channel)
 {
-    uint8_t reg_addr = reg;
-    uint32_t timeout;
-    uint32_t status;
+    uint8_t high_count = 0U;
+    uint8_t sample;
 
-    if (data == 0)
+    IR_SelectChannel(channel);
+
+    for (sample = 0U; sample < IR_GPIO_SAMPLE_COUNT; sample++)
     {
-        return false;
-    }
-
-    /*
-     * 若上一次异常传输留下了无效 FIFO 数据，先清理。
-     * 正常情况下控制器此时应为空闲。
-     */
-    if (!IR_I2C_WaitIdle())
-    {
-        goto read_failed;
-    }
-
-    DL_I2C_flushControllerTXFIFO(I2C_IR_INST);
-    DL_I2C_flushControllerRXFIFO(I2C_IR_INST);
-
-    if (DL_I2C_fillControllerTXFIFO(I2C_IR_INST, &reg_addr, 1U) != 1U)
-    {
-        goto read_failed;
-    }
-
-    /* 第一次传输：写入要读取的寄存器地址。 */
-    DL_I2C_startControllerTransfer(
-        I2C_IR_INST,
-        (uint32_t)IR_I2C_DEVICE_ADDR,
-        DL_I2C_CONTROLLER_DIRECTION_TX,
-        1U);
-
-    delay_cycles(IR_I2C_START_DELAY_CYCLES);
-
-    if (!IR_I2C_WaitIdle())
-    {
-        goto read_failed;
-    }
-
-    /* 第二次传输：从该寄存器读取 1 个字节。 */
-    DL_I2C_startControllerTransfer(
-        I2C_IR_INST,
-        (uint32_t)IR_I2C_DEVICE_ADDR,
-        DL_I2C_CONTROLLER_DIRECTION_RX,
-        1U);
-
-    delay_cycles(IR_I2C_START_DELAY_CYCLES);
-
-    timeout = IR_I2C_TIMEOUT;
-
-    while (DL_I2C_isControllerRXFIFOEmpty(I2C_IR_INST))
-    {
-        status = DL_I2C_getControllerStatus(I2C_IR_INST);
-
-        if ((status & (DL_I2C_CONTROLLER_STATUS_ERROR |
-                       DL_I2C_CONTROLLER_STATUS_ARBITRATION_LOST)) != 0U)
+        if (DL_GPIO_readPins(IR_HW_PORT, IR_OUT_PIN) != 0U)
         {
-            goto read_failed;
+            high_count++;
         }
 
-        if (timeout == 0U)
+        if ((sample + 1U) < IR_GPIO_SAMPLE_COUNT)
         {
-            goto read_failed;
+            delay_cycles(IR_GPIO_SAMPLE_GAP_CYCLES);
         }
-
-        timeout--;
     }
 
-    *data = DL_I2C_receiveControllerData(I2C_IR_INST);
-
-    if (!IR_I2C_WaitIdle())
-    {
-        goto read_failed;
-    }
-
-    return true;
-
-read_failed:
-    IR_I2C_AbortTransfer();
-    g_ir_i2c_error_total++;
-    return false;
+    return (high_count > (IR_GPIO_SAMPLE_COUNT / 2U)) ? 1U : 0U;
 }
 
-/*
- * 读取并拆分八路红外数据。
- * 只有 I2C 成功时才改写 x1~x8。
- */
+uint8_t IR_ReadAllRaw(void)
+{
+    uint8_t data = 0U;
+    uint8_t logical_index;
+
+    for (logical_index = 0U; logical_index < 8U; logical_index++)
+    {
+        uint8_t physical_channel;
+        uint8_t raw_level;
+        uint8_t bit_position = (uint8_t)(7U - logical_index);
+
+#if IR_CH1_IS_LEFTMOST
+        physical_channel = logical_index;
+#else
+        physical_channel = (uint8_t)(7U - logical_index);
+#endif
+
+        raw_level = IR_ReadChannelRaw(physical_channel);
+
+        if (raw_level != 0U)
+        {
+            data |= (uint8_t)(1U << bit_position);
+        }
+    }
+
+    g_ir_raw_data = data;
+    g_ir_scan_count++;
+    return data;
+}
+
 bool deal_IRdata(u8 *x1, u8 *x2, u8 *x3, u8 *x4,
                  u8 *x5, u8 *x6, u8 *x7, u8 *x8)
 {
-    u8 IRbuf;
+    uint8_t raw_data;
+    uint8_t line_data = 0U;
+    uint8_t bit_position;
 
     if ((x1 == 0) || (x2 == 0) || (x3 == 0) || (x4 == 0) ||
         (x5 == 0) || (x6 == 0) || (x7 == 0) || (x8 == 0))
@@ -222,19 +149,29 @@ bool deal_IRdata(u8 *x1, u8 *x2, u8 *x3, u8 *x4,
         return false;
     }
 
-    if (!IRI2C_ReadByte(IR_I2C_REG_DATA, &IRbuf))
+    raw_data = IR_ReadAllRaw();
+
+    /* Normalize to the old program's convention: 0 = black, 1 = white. */
+    for (bit_position = 0U; bit_position < 8U; bit_position++)
     {
-        return false;
+        uint8_t raw_level = (uint8_t)((raw_data >> bit_position) & 0x01U);
+        uint8_t normalized_level =
+            (raw_level == IR_BLACK_LEVEL) ? 0U : 1U;
+
+        line_data |= (uint8_t)(normalized_level << bit_position);
     }
 
-    *x1 = (IRbuf >> 7) & 0x01U;
-    *x2 = (IRbuf >> 6) & 0x01U;
-    *x3 = (IRbuf >> 5) & 0x01U;
-    *x4 = (IRbuf >> 4) & 0x01U;
-    *x5 = (IRbuf >> 3) & 0x01U;
-    *x6 = (IRbuf >> 2) & 0x01U;
-    *x7 = (IRbuf >> 1) & 0x01U;
-    *x8 = (IRbuf >> 0) & 0x01U;
+    g_ir_line_data  = line_data;
+    g_ir_black_mask = (uint8_t)(~line_data);
+
+    *x1 = (u8)((line_data >> 7) & 0x01U);
+    *x2 = (u8)((line_data >> 6) & 0x01U);
+    *x3 = (u8)((line_data >> 5) & 0x01U);
+    *x4 = (u8)((line_data >> 4) & 0x01U);
+    *x5 = (u8)((line_data >> 3) & 0x01U);
+    *x6 = (u8)((line_data >> 2) & 0x01U);
+    *x7 = (u8)((line_data >> 1) & 0x01U);
+    *x8 = (u8)((line_data >> 0) & 0x01U);
 
     return true;
 }
@@ -244,31 +181,6 @@ static void IR_ResetPIDState(void)
     IRTrack_Integral = 0;
     error_last = 0;
     pid_output_IRR = 0;
-}
-
-/*
- * 记录一次 I2C 失败。
- *
- * 普通循迹：
- *   第一次偶发失败只放弃本次控制更新；
- *   连续达到 I2C_FAIL_STOP_COUNT 次后停车。
- *
- * 直角弯：
- *   正在使用较大差速强转，任何一次失败都立即停车。
- */
-static void IR_RecordI2CFailure(bool stop_immediately)
-{
-    if (g_ir_i2c_fail_streak < 255U)
-    {
-        g_ir_i2c_fail_streak++;
-    }
-
-    if (stop_immediately ||
-        (g_ir_i2c_fail_streak >= I2C_FAIL_STOP_COUNT))
-    {
-        Contrl_Speed(0, 0, 0, 0);
-        IR_ResetPIDState();
-    }
 }
 
 int32_t PID_IR_Calc(int8_t actual_value)
@@ -283,12 +195,12 @@ int32_t PID_IR_Calc(int8_t actual_value)
     {
         IRTrack_Integral = 5000;
     }
-    if (IRTrack_Integral < -5000)
+    else if (IRTrack_Integral < -5000)
     {
         IRTrack_Integral = -5000;
     }
 
-    deriv = error - error_last;
+    deriv = (int8_t)(error - error_last);
 
     output = (int32_t)error * (int32_t)IRTrack_Trun_KP
            + (int32_t)IRTrack_Trun_KI * IRTrack_Integral
@@ -315,7 +227,7 @@ static int32_t IR_ApplyIMUAssist(int32_t ir_output, int8_t error)
     gain = (abs_error <= IMU_DAMP_FULL_GAIN_ERROR) ?
            IMU_DAMP_GAIN_CENTER : IMU_DAMP_GAIN_TURN;
 
-    /* Convert IMU sign to the same convention as motor Vz:
+    /* Convert IMU sign to the motor-control convention:
      * positive = right turn, negative = left turn. */
     yaw_rate = IMU_GetGyroZDps() * IMU_GYRO_Z_SIGN;
     damping = (int32_t)(yaw_rate * gain);
@@ -329,9 +241,6 @@ static int32_t IR_ApplyIMUAssist(int32_t ir_output, int8_t error)
         damping = -IMU_DAMP_OUTPUT_LIMIT;
     }
 
-    /* Rate damping: oppose the car's current angular velocity.
-     * It is most useful when the line error has returned toward zero but
-     * the chassis is still rotating, which is exactly the overshoot stage. */
     return ir_output - damping;
 #else
     (void)error;
@@ -342,7 +251,7 @@ static int32_t IR_ApplyIMUAssist(int32_t ir_output, int8_t error)
 static void IR_CornerTurnLeft(void)
 {
     u8 x1, x2, x3, x4, x5, x6, x7, x8;
-    uint32_t elapsed = 0;
+    uint32_t elapsed = 0U;
 
     Contrl_Speed(CORNER_INNER_SPEED, CORNER_INNER_SPEED,
                  CORNER_OUTER_SPEED, CORNER_OUTER_SPEED);
@@ -358,20 +267,17 @@ static void IR_CornerTurnLeft(void)
         if (!deal_IRdata(&x1, &x2, &x3, &x4,
                          &x5, &x6, &x7, &x8))
         {
-            /*
-             * 直角弯正在强转，读取失败一次就立即停车。
-             * 保留失败计数，等待下一次 LineWalking 成功后清零。
-             */
-            IR_RecordI2CFailure(true);
+            Contrl_Speed(0, 0, 0, 0);
+            IR_ResetPIDState();
             return;
         }
 
-        /*
-         * 退出条件: 左侧4不再全黑(极端左偏已减轻), 且 X2~X7 有黑线。
-         */
-        if (!(x1 == 0 && x2 == 0 && x3 == 0 && x4 == 0))
+        /* Exit when the extreme-left pattern has eased and the line has
+         * re-entered the inner sensor area. */
+        if (!(x1 == 0U && x2 == 0U && x3 == 0U && x4 == 0U))
         {
-            if (x2 == 0 || x3 == 0 || x4 == 0 || x5 == 0 || x6 == 0 || x7 == 0)
+            if (x2 == 0U || x3 == 0U || x4 == 0U ||
+                x5 == 0U || x6 == 0U || x7 == 0U)
             {
                 break;
             }
@@ -382,7 +288,7 @@ static void IR_CornerTurnLeft(void)
 static void IR_CornerTurnRight(void)
 {
     u8 x1, x2, x3, x4, x5, x6, x7, x8;
-    uint32_t elapsed = 0;
+    uint32_t elapsed = 0U;
 
     Contrl_Speed(CORNER_OUTER_SPEED, CORNER_OUTER_SPEED,
                  CORNER_INNER_SPEED, CORNER_INNER_SPEED);
@@ -398,20 +304,17 @@ static void IR_CornerTurnRight(void)
         if (!deal_IRdata(&x1, &x2, &x3, &x4,
                          &x5, &x6, &x7, &x8))
         {
-            /*
-             * 直角弯正在强转，读取失败一次就立即停车。
-             * 保留失败计数，等待下一次 LineWalking 成功后清零。
-             */
-            IR_RecordI2CFailure(true);
+            Contrl_Speed(0, 0, 0, 0);
+            IR_ResetPIDState();
             return;
         }
 
-        /*
-         * 退出条件: 右侧4不再全黑(极端右偏已减轻), 且 X2~X7 有黑线。
-         */
-        if (!(x5 == 0 && x6 == 0 && x7 == 0 && x8 == 0))
+        /* Exit when the extreme-right pattern has eased and the line has
+         * re-entered the inner sensor area. */
+        if (!(x5 == 0U && x6 == 0U && x7 == 0U && x8 == 0U))
         {
-            if (x2 == 0 || x3 == 0 || x4 == 0 || x5 == 0 || x6 == 0 || x7 == 0)
+            if (x2 == 0U || x3 == 0U || x4 == 0U ||
+                x5 == 0U || x6 == 0U || x7 == 0U)
             {
                 break;
             }
@@ -424,7 +327,6 @@ void LineWalking(void)
     static int8_t err = 0;
     static u8 x1, x2, x3, x4, x5, x6, x7, x8;
     u8 black_count;
-    bool recovered_from_i2c;
 
     /* Parse all IMU bytes accumulated since the previous control cycle. */
     IMU_Process();
@@ -432,60 +334,49 @@ void LineWalking(void)
     if (!deal_IRdata(&x1, &x2, &x3, &x4,
                      &x5, &x6, &x7, &x8))
     {
-        /*
-         * 读取失败时不使用旧的 x1~x8，不计算新的 PID。
-         * 第一次偶发失败维持上一周期电机指令；
-         * 连续失败达到阈值后四轮停车。
-         */
-        IR_RecordI2CFailure(false);
+        Contrl_Speed(0, 0, 0, 0);
+        IR_ResetPIDState();
         return;
     }
 
-    /*
-     * 通信成功：
-     * 记录是否刚从故障恢复，再清除连续失败计数。
-     */
-    recovered_from_i2c = (g_ir_i2c_fail_streak != 0U);
-    g_ir_i2c_fail_streak = 0U;
+    black_count = (u8)((x1 == 0U) + (x2 == 0U) + (x3 == 0U) + (x4 == 0U)
+                     + (x5 == 0U) + (x6 == 0U) + (x7 == 0U) + (x8 == 0U));
 
-    black_count = (u8)((x1 == 0) + (x2 == 0) + (x3 == 0) + (x4 == 0)
-                     + (x5 == 0) + (x6 == 0) + (x7 == 0) + (x8 == 0));
-
-    if (x1 == 0 && x2 == 0 && x3 == 0 && x4 == 0 &&
-        x5 == 0 && x6 == 1 && x7 == 1 && x8 == 1)
+    if (x1 == 0U && x2 == 0U && x3 == 0U && x4 == 0U &&
+        x5 == 0U && x6 == 1U && x7 == 1U && x8 == 1U)
     {
         err = -15;
         IR_CornerTurnLeft();
         return;
     }
-    else if (x1 == 1 && x2 == 1 && x3 == 1 && x4 == 0 &&
-             x5 == 0 && x6 == 0 && x7 == 0 && x8 == 0)
+    else if (x1 == 1U && x2 == 1U && x3 == 1U && x4 == 0U &&
+             x5 == 0U && x6 == 0U && x7 == 0U && x8 == 0U)
     {
         err = 15;
         IR_CornerTurnRight();
         return;
     }
-    else if (x1 == 0 && x2 == 0 && x3 == 0 && x4 == 0 &&
-             x5 == 0 && x6 == 0 && x7 == 1 && x8 == 1)
+    else if (x1 == 0U && x2 == 0U && x3 == 0U && x4 == 0U &&
+             x5 == 0U && x6 == 0U && x7 == 1U && x8 == 1U)
     {
         err = -15;
         IR_CornerTurnLeft();
         return;
     }
-    else if (x1 == 1 && x2 == 1 && x3 == 0 && x4 == 0 &&
-             x5 == 0 && x6 == 0 && x7 == 0 && x8 == 0)
+    else if (x1 == 1U && x2 == 1U && x3 == 0U && x4 == 0U &&
+             x5 == 0U && x6 == 0U && x7 == 0U && x8 == 0U)
     {
         err = 15;
         IR_CornerTurnRight();
         return;
     }
-    else if (x1 == 0 && x8 == 1 && black_count >= 4)
+    else if (x1 == 0U && x8 == 1U && black_count >= 4U)
     {
         err = -15;
         IR_CornerTurnLeft();
         return;
     }
-    else if (x1 == 1 && x8 == 0 && black_count >= 4)
+    else if (x1 == 1U && x8 == 0U && black_count >= 4U)
     {
         err = 15;
         IR_CornerTurnRight();
@@ -500,7 +391,7 @@ void LineWalking(void)
 
         for (i = 0; i < 8; i++)
         {
-            if (sensors[i] == 0)
+            if (sensors[i] == 0U)
             {
                 count++;
                 sum += (float)i;
@@ -513,12 +404,8 @@ void LineWalking(void)
             err = (int8_t)((centroid - 3.5f) * 5.0f);
         }
         /*
-         * count == 0：
-         *   I2C 已确认读取成功，因此这是合法的 0xFF（全白丢线），
-         *   保留上一次误差。
-         *
-         * count == 8：
-         *   八路全黑，保留上一次误差。
+         * count == 0: all white / line lost, keep the previous error.
+         * count == 8: all black, keep the previous error.
          */
     }
 
@@ -526,20 +413,9 @@ void LineWalking(void)
     {
         err = 20;
     }
-    if (err < -20)
+    else if (err < -20)
     {
         err = -20;
-    }
-
-    if (recovered_from_i2c)
-    {
-        /*
-         * 通信恢复后的第一帧：
-         * 清除积分，并用当前误差初始化微分历史，
-         * 避免 KD 因故障前后的误差跳变产生瞬时冲击。
-         */
-        IRTrack_Integral = 0;
-        error_last = err;
     }
 
     pid_output_IRR = PID_IR_Calc(err);
