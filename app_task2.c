@@ -29,10 +29,10 @@
 #define TASK2_LAUNCH_SPEED              300
 
 /* 小于该时间时，即使看到宽黑线也不能判为完成一圈。 */
-#define TASK2_MIN_LAP_MS             10000U
+#define TASK2_MIN_LAP_MS             4000U
 
 /* 基础验证版按运行时间切换到终点接近速度，不依赖IMU。 */
-#define TASK2_APPROACH_FALLBACK_MS  13000U
+#define TASK2_APPROACH_FALLBACK_MS  5000U
 
 /* 丢失A点时的安全停车上限。 */
 #define TASK2_MAX_RUN_MS            23000U

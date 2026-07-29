@@ -30,9 +30,9 @@
 #define IR_H_OVAL_TRACK_MODE           1U
 
 /* H题要求2的三档速度，单位沿用电机驱动板的速度指令。 */
-#define IR_SPEED_FAST                 430
-#define IR_SPEED_CURVE                350
-#define IR_SPEED_APPROACH             220
+#define IR_SPEED_FAST                 310
+#define IR_SPEED_CURVE                300
+#define IR_SPEED_APPROACH             260
 #define IR_CURVE_ERROR_THRESHOLD        6
 #define IR_CURVE_YAW_RATE_DPS          18.0f
 
