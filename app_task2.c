@@ -13,26 +13,29 @@
 #include "app_task2.h"
 #include "app_irtracking.h"
 #include "app_motor.h"
-#include "app_imu.h"
 
 #define TASK2_KEY_DEBOUNCE_FRAMES       3U
 #define TASK2_LEAVE_CLEAR_FRAMES         6U
 #define TASK2_MARKER_CONFIRM_FRAMES      2U
 #define TASK2_MARKER_MIN_BLACK           5U
 
+/*
+ * 按下K1后的启动确认阶段：
+ * 先以低速直行一小段，再交给循迹控制。
+ * 这样无需仿真器也能直接确认K1事件和正式任务状态机已经生效，
+ * 同时避免起点宽黑线让第一帧循迹方向不确定。
+ */
+#define TASK2_LAUNCH_MS                 500U
+#define TASK2_LAUNCH_SPEED              300
+
 /* 小于该时间时，即使看到宽黑线也不能判为完成一圈。 */
 #define TASK2_MIN_LAP_MS             10000U
 
-/* IMU累计右转约300度，或运行13秒后，切换到终点接近速度。 */
-#define TASK2_APPROACH_TURN_DEG       300.0f
+/* 基础验证版按运行时间切换到终点接近速度，不依赖IMU。 */
 #define TASK2_APPROACH_FALLBACK_MS  13000U
 
 /* 丢失A点时的安全停车上限。 */
 #define TASK2_MAX_RUN_MS            23000U
-
-/* 与app_irtracking.h中的陀螺仪方向约定保持一致。 */
-#define TASK2_GYRO_Z_TO_RIGHT_SIGN  IMU_GYRO_Z_SIGN
-#define TASK2_GYRO_TURN_DEADBAND_DPS  5.0f
 
 volatile Task2_State_t g_task2_state = TASK2_STATE_WAIT_KEY;
 volatile Task2_StopReason_t g_task2_stop_reason = TASK2_STOP_NONE;
@@ -127,8 +130,7 @@ static void Task2_UpdateApproachSpeed(void)
         return;
     }
 
-    if ((g_task2_right_turn_deg >= TASK2_APPROACH_TURN_DEG) ||
-        (g_task2_elapsed_ms >= TASK2_APPROACH_FALLBACK_MS))
+    if (g_task2_elapsed_ms >= TASK2_APPROACH_FALLBACK_MS)
     {
         g_task2_approach_mode = 1U;
         IR_SetBaseSpeed(IR_SPEED_APPROACH);
@@ -147,9 +149,16 @@ void Task2_Init(void)
     g_task2_approach_mode = 0U;
 
     s_leave_clear_frames = 0U;
-    s_key_last_raw_pressed = Task2_ReadKeyPressed();
-    s_key_stable_pressed = s_key_last_raw_pressed;
-    s_key_same_frames = TASK2_KEY_DEBOUNCE_FRAMES;
+
+    /*
+     * 始终从“已释放”状态开始消抖。
+     * 这样即使K1在约4.6秒上电初始化结束前已经按下并保持，
+     * 主循环开始后仍会在连续稳定3帧时产生一次启动事件，
+     * 不会把这次按键当作初始状态吞掉。
+     */
+    s_key_last_raw_pressed = false;
+    s_key_stable_pressed = false;
+    s_key_same_frames = 0U;
 
     IR_ResetController();
     IR_SetBaseSpeed(IR_SPEED_FAST);
@@ -174,7 +183,18 @@ void Task2_Process(void)
 
         case TASK2_STATE_LEAVING_A:
             Task2_UpdateApproachSpeed();
-            LineWalking();
+
+            if (g_task2_elapsed_ms < TASK2_LAUNCH_MS)
+            {
+                Contrl_Speed(TASK2_LAUNCH_SPEED,
+                             TASK2_LAUNCH_SPEED,
+                             TASK2_LAUNCH_SPEED,
+                             TASK2_LAUNCH_SPEED);
+            }
+            else
+            {
+                LineWalking();
+            }
 
             marker = Task2_IsAMarker();
             g_task2_marker_now = marker ? 1U : 0U;
@@ -260,7 +280,6 @@ void Task2_Tick(uint16_t elapsed_ms)
     if ((g_task2_state == TASK2_STATE_LEAVING_A) ||
         (g_task2_state == TASK2_STATE_RUNNING))
     {
-        float right_turn_rate;
         uint32_t updated_time =
             g_task2_elapsed_ms + (uint32_t)elapsed_ms;
 
@@ -270,17 +289,6 @@ void Task2_Tick(uint16_t elapsed_ms)
         }
         g_task2_elapsed_ms = updated_time;
 
-        if (IMU_IsOnline() && IMU_IsCalibrated())
-        {
-            right_turn_rate =
-                IMU_GetGyroZDps() * TASK2_GYRO_Z_TO_RIGHT_SIGN;
-
-            if (right_turn_rate > TASK2_GYRO_TURN_DEADBAND_DPS)
-            {
-                g_task2_right_turn_deg +=
-                    right_turn_rate * ((float)elapsed_ms / 1000.0f);
-            }
-        }
     }
 }
 

@@ -21,7 +21,6 @@
 
 #include "app_irtracking.h"
 #include "app_motor.h"
-#include "app_imu.h"
 
 /* ========== SysConfig-generated hardware mapping ========== */
 #define IR_HW_PORT      IR_GPIO_PORT
@@ -246,40 +245,8 @@ int32_t PID_IR_Calc(int8_t actual_value)
 
 static int32_t IR_ApplyIMUAssist(int32_t ir_output, int8_t error)
 {
-#if IMU_ASSIST_ENABLE
-    int8_t abs_error;
-    float yaw_rate;
-    float gain;
-    int32_t damping;
-
-    if (!IMU_IsOnline() || !IMU_IsCalibrated())
-    {
-        return ir_output;
-    }
-
-    abs_error = (error >= 0) ? error : (int8_t)(-error);
-    gain = (abs_error <= IMU_DAMP_FULL_GAIN_ERROR) ?
-           IMU_DAMP_GAIN_CENTER : IMU_DAMP_GAIN_TURN;
-
-    /* Convert IMU sign to the motor-control convention:
-     * positive = right turn, negative = left turn. */
-    yaw_rate = IMU_GetGyroZDps() * IMU_GYRO_Z_SIGN;
-    damping = (int32_t)(yaw_rate * gain);
-
-    if (damping > IMU_DAMP_OUTPUT_LIMIT)
-    {
-        damping = IMU_DAMP_OUTPUT_LIMIT;
-    }
-    else if (damping < -IMU_DAMP_OUTPUT_LIMIT)
-    {
-        damping = -IMU_DAMP_OUTPUT_LIMIT;
-    }
-
-    return ir_output - damping;
-#else
     (void)error;
     return ir_output;
-#endif
 }
 
 #if (IR_H_OVAL_TRACK_MODE == 0U)
@@ -295,9 +262,6 @@ static void IR_CornerTurnLeft(void)
     {
         delay_ms(CORNER_SENSOR_MS);
         elapsed += CORNER_SENSOR_MS;
-
-        IMU_Tick(CORNER_SENSOR_MS);
-        IMU_Process();
 
         if (!deal_IRdata(&x1, &x2, &x3, &x4,
                          &x5, &x6, &x7, &x8))
@@ -333,9 +297,6 @@ static void IR_CornerTurnRight(void)
         delay_ms(CORNER_SENSOR_MS);
         elapsed += CORNER_SENSOR_MS;
 
-        IMU_Tick(CORNER_SENSOR_MS);
-        IMU_Process();
-
         if (!deal_IRdata(&x1, &x2, &x3, &x4,
                          &x5, &x6, &x7, &x8))
         {
@@ -364,10 +325,6 @@ void LineWalking(void)
     u8 black_count;
     int16_t actual_speed;
     int8_t abs_error;
-    float yaw_rate_abs;
-
-    /* Parse all IMU bytes accumulated since the previous control cycle. */
-    IMU_Process();
 
     if (!deal_IRdata(&x1, &x2, &x3, &x4,
                      &x5, &x6, &x7, &x8))
@@ -480,21 +437,6 @@ void LineWalking(void)
         (actual_speed > IR_SPEED_CURVE))
     {
         actual_speed = IR_SPEED_CURVE;
-    }
-
-    if (IMU_IsOnline() && IMU_IsCalibrated())
-    {
-        yaw_rate_abs = IMU_GetGyroZDps();
-        if (yaw_rate_abs < 0.0f)
-        {
-            yaw_rate_abs = -yaw_rate_abs;
-        }
-
-        if ((yaw_rate_abs >= IR_CURVE_YAW_RATE_DPS) &&
-            (actual_speed > IR_SPEED_CURVE))
-        {
-            actual_speed = IR_SPEED_CURVE;
-        }
     }
 
     Motion_Car_Control(actual_speed, 0, pid_output_IRR);

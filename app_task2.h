@@ -2,8 +2,8 @@
  * app_task2.h - H题要求2：按键启动，顺时针一圈，回到A点停车
  *
  * 启动按键：
- *   PA28 -> 按键 -> GND
- *   PA28由SysConfig配置为输入上拉，按下为低电平。
+ *   扩展板板载K1 -> PA2
+ *   PA2由SysConfig配置为输入上拉，按下为低电平。
  */
 
 #ifndef APP_TASK2_H
