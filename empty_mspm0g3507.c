@@ -11,6 +11,7 @@
 #include "app_motor.h"
 #include "app_motor_usart.h"
 #include "app_irtracking.h"
+#include "app_imu.h"
 #include "app_task2.h"
 
 #define CONTROL_LOOP_MS              IR_CONTROL_LOOP_MS
@@ -49,6 +50,13 @@ int main(void)
      * 要求2基础验证版暂时完全不初始化IMU。
      * 已验证K1和电机链路正常后，先让纯灰度循迹状态机跑通。
      */
+    /*
+     * IMU 在等待按键期间完成静止标定。
+     * 若 IMU 未连接，超时后自动退回纯灰度循迹。
+     */
+    IMU_Init();
+    IMU_StartGyroCalibration(40);
+
     Task2_Init();
     g_startup_stage = 4U;
     delay_ms(100U);
@@ -56,10 +64,13 @@ int main(void)
 
     while (1)
     {
+        IMU_Process();
+
         Task2_Process();
 
         delay_ms(CONTROL_LOOP_MS);
 
+        IMU_Tick(CONTROL_LOOP_MS);
         Task2_Tick(CONTROL_LOOP_MS);
     }
 }

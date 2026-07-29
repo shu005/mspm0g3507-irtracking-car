@@ -69,7 +69,7 @@
 
 /* ========== IMU angular-rate damping parameters ========== */
 /* 1 = enabled; 0 = pure IR tracking. */
-#define IMU_ASSIST_ENABLE              0
+#define IMU_ASSIST_ENABLE              1
 
 /* Motion_Car_Control uses positive Vz for a right turn.
  * With a common flat installation, raw gyro Z is often negative on a

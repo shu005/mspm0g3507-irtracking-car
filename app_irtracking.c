@@ -21,6 +21,7 @@
 
 #include "app_irtracking.h"
 #include "app_motor.h"
+#include "app_imu.h"
 
 /* ========== SysConfig-generated hardware mapping ========== */
 #define IR_HW_PORT      IR_GPIO_PORT
@@ -245,8 +246,38 @@ int32_t PID_IR_Calc(int8_t actual_value)
 
 static int32_t IR_ApplyIMUAssist(int32_t ir_output, int8_t error)
 {
+#if IMU_ASSIST_ENABLE
+    int8_t abs_error;
+    float yaw_rate;
+    float gain;
+    int32_t damping;
+
+    if (!IMU_IsOnline() || !IMU_IsCalibrated())
+    {
+        return ir_output;
+    }
+
+    abs_error = (error >= 0) ? error : (int8_t)(-error);
+    gain = (abs_error <= IMU_DAMP_FULL_GAIN_ERROR) ?
+           IMU_DAMP_GAIN_CENTER : IMU_DAMP_GAIN_TURN;
+
+    yaw_rate = IMU_GetGyroZDps() * IMU_GYRO_Z_SIGN;
+    damping = (int32_t)(yaw_rate * gain);
+
+    if (damping > IMU_DAMP_OUTPUT_LIMIT)
+    {
+        damping = IMU_DAMP_OUTPUT_LIMIT;
+    }
+    else if (damping < -IMU_DAMP_OUTPUT_LIMIT)
+    {
+        damping = -IMU_DAMP_OUTPUT_LIMIT;
+    }
+
+    return ir_output - damping;
+#else
     (void)error;
     return ir_output;
+#endif
 }
 
 #if (IR_H_OVAL_TRACK_MODE == 0U)
