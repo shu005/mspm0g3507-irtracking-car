@@ -23,8 +23,21 @@
 #define IRTrack_Trun_KI   (0)
 #define IRTrack_Trun_KD   (150)
 
-/* Forward speed and control period. */
-#define IRR_SPEED           300
+/*
+ * H题要求2使用椭圆环线，不包含直角弯。
+ * 1 = 关闭原工程的直角弯阻塞控制，使用连续质心循迹。
+ */
+#define IR_H_OVAL_TRACK_MODE           1U
+
+/* H题要求2的三档速度，单位沿用电机驱动板的速度指令。 */
+#define IR_SPEED_FAST                 430
+#define IR_SPEED_CURVE                350
+#define IR_SPEED_APPROACH             220
+#define IR_CURVE_ERROR_THRESHOLD        6
+#define IR_CURVE_YAW_RATE_DPS          18.0f
+
+/* 兼容工程内旧名称。 */
+#define IRR_SPEED           IR_SPEED_FAST
 #define IR_CONTROL_LOOP_MS   10U
 
 /* ========== Multiplexed grayscale module configuration ========== */
@@ -79,6 +92,12 @@ extern volatile uint8_t g_ir_line_data;
 /* Convenience mask: 1 = black, 0 = white; X1 at bit7. */
 extern volatile uint8_t g_ir_black_mask;
 
+/* 当前一帧检测到黑色的传感器数量，范围0~8。 */
+extern volatile uint8_t g_ir_black_count;
+
+/* 当前质心循迹误差，负数偏左，正数偏右。 */
+extern volatile int8_t g_ir_error;
+
 /* Total number of completed 8-channel scans. */
 extern volatile uint32_t g_ir_scan_count;
 
@@ -110,6 +129,14 @@ bool deal_IRdata(u8 *x1, u8 *x2, u8 *x3, u8 *x4,
                  u8 *x5, u8 *x6, u8 *x7, u8 *x8);
 
 int32_t PID_IR_Calc(int8_t actual_value);
+
+/* 设置/读取当前循迹基础速度。 */
+void IR_SetBaseSpeed(int16_t speed);
+int16_t IR_GetBaseSpeed(void);
+
+/* 每次从A点重新开始前清空PID和历史误差。 */
+void IR_ResetController(void);
+
 void LineWalking(void);
 
 #endif /* APP_IRTRACKING_H */

@@ -31,10 +31,12 @@
 #define IR_OUT_PIN      IR_GPIO_IR_OUT_PIN
 
 /* ========== Right-angle corner parameters ========== */
+#if (IR_H_OVAL_TRACK_MODE == 0U)
 #define CORNER_OUTER_SPEED   400
 #define CORNER_INNER_SPEED  (-400)
 #define CORNER_SENSOR_MS      15U
 #define CORNER_TIMEOUT_MS    800U
+#endif
 
 /* Keep only 40% of PID output near the center. */
 #define CENTER_ERROR_RANGE       2
@@ -46,16 +48,22 @@ u8  trun_flag = 0;
 volatile uint8_t  g_ir_raw_data    = 0xFFU;
 volatile uint8_t  g_ir_line_data   = 0xFFU;
 volatile uint8_t  g_ir_black_mask  = 0x00U;
+volatile uint8_t  g_ir_black_count = 0U;
+volatile int8_t   g_ir_error       = 0;
 volatile uint32_t g_ir_scan_count  = 0U;
 volatile uint8_t  g_ir_last_channel = 0U;
 
 static int32_t IRTrack_Integral = 0;
 static int8_t  error_last = 0;
+static int8_t  s_line_error = 0;
+static int16_t s_ir_base_speed = IR_SPEED_FAST;
 
 static void IR_ResetPIDState(void);
 static int32_t IR_ApplyIMUAssist(int32_t ir_output, int8_t error);
+#if (IR_H_OVAL_TRACK_MODE == 0U)
 static void IR_CornerTurnLeft(void);
 static void IR_CornerTurnRight(void);
+#endif
 
 static void IR_WriteAddressPin(uint32_t pin, bool high)
 {
@@ -183,6 +191,32 @@ static void IR_ResetPIDState(void)
     pid_output_IRR = 0;
 }
 
+void IR_ResetController(void)
+{
+    IR_ResetPIDState();
+    s_line_error = 0;
+    g_ir_error = 0;
+}
+
+void IR_SetBaseSpeed(int16_t speed)
+{
+    if (speed < 0)
+    {
+        speed = 0;
+    }
+    else if (speed > 1000)
+    {
+        speed = 1000;
+    }
+
+    s_ir_base_speed = speed;
+}
+
+int16_t IR_GetBaseSpeed(void)
+{
+    return s_ir_base_speed;
+}
+
 int32_t PID_IR_Calc(int8_t actual_value)
 {
     int32_t output;
@@ -248,6 +282,7 @@ static int32_t IR_ApplyIMUAssist(int32_t ir_output, int8_t error)
 #endif
 }
 
+#if (IR_H_OVAL_TRACK_MODE == 0U)
 static void IR_CornerTurnLeft(void)
 {
     u8 x1, x2, x3, x4, x5, x6, x7, x8;
@@ -321,12 +356,15 @@ static void IR_CornerTurnRight(void)
         }
     }
 }
+#endif
 
 void LineWalking(void)
 {
-    static int8_t err = 0;
     static u8 x1, x2, x3, x4, x5, x6, x7, x8;
     u8 black_count;
+    int16_t actual_speed;
+    int8_t abs_error;
+    float yaw_rate_abs;
 
     /* Parse all IMU bytes accumulated since the previous control cycle. */
     IMU_Process();
@@ -341,48 +379,51 @@ void LineWalking(void)
 
     black_count = (u8)((x1 == 0U) + (x2 == 0U) + (x3 == 0U) + (x4 == 0U)
                      + (x5 == 0U) + (x6 == 0U) + (x7 == 0U) + (x8 == 0U));
+    g_ir_black_count = black_count;
 
+#if (IR_H_OVAL_TRACK_MODE == 0U)
     if (x1 == 0U && x2 == 0U && x3 == 0U && x4 == 0U &&
         x5 == 0U && x6 == 1U && x7 == 1U && x8 == 1U)
     {
-        err = -15;
+        s_line_error = -15;
         IR_CornerTurnLeft();
         return;
     }
     else if (x1 == 1U && x2 == 1U && x3 == 1U && x4 == 0U &&
              x5 == 0U && x6 == 0U && x7 == 0U && x8 == 0U)
     {
-        err = 15;
+        s_line_error = 15;
         IR_CornerTurnRight();
         return;
     }
     else if (x1 == 0U && x2 == 0U && x3 == 0U && x4 == 0U &&
              x5 == 0U && x6 == 0U && x7 == 1U && x8 == 1U)
     {
-        err = -15;
+        s_line_error = -15;
         IR_CornerTurnLeft();
         return;
     }
     else if (x1 == 1U && x2 == 1U && x3 == 0U && x4 == 0U &&
              x5 == 0U && x6 == 0U && x7 == 0U && x8 == 0U)
     {
-        err = 15;
+        s_line_error = 15;
         IR_CornerTurnRight();
         return;
     }
     else if (x1 == 0U && x8 == 1U && black_count >= 4U)
     {
-        err = -15;
+        s_line_error = -15;
         IR_CornerTurnLeft();
         return;
     }
     else if (x1 == 1U && x8 == 0U && black_count >= 4U)
     {
-        err = 15;
+        s_line_error = 15;
         IR_CornerTurnRight();
         return;
     }
     else
+#endif
     {
         int count = 0;
         float sum = 0.0f;
@@ -401,7 +442,7 @@ void LineWalking(void)
         if (count > 0 && count < 8)
         {
             float centroid = sum / (float)count;
-            err = (int8_t)((centroid - 3.5f) * 5.0f);
+            s_line_error = (int8_t)((centroid - 3.5f) * 5.0f);
         }
         /*
          * count == 0: all white / line lost, keep the previous error.
@@ -409,24 +450,52 @@ void LineWalking(void)
          */
     }
 
-    if (err > 20)
+    if (s_line_error > 20)
     {
-        err = 20;
+        s_line_error = 20;
     }
-    else if (err < -20)
+    else if (s_line_error < -20)
     {
-        err = -20;
+        s_line_error = -20;
     }
 
-    pid_output_IRR = PID_IR_Calc(err);
+    g_ir_error = s_line_error;
+    pid_output_IRR = PID_IR_Calc(s_line_error);
 
-    if (err >= -CENTER_ERROR_RANGE && err <= CENTER_ERROR_RANGE)
+    if (s_line_error >= -CENTER_ERROR_RANGE &&
+        s_line_error <= CENTER_ERROR_RANGE)
     {
         pid_output_IRR =
             (pid_output_IRR * CENTER_OUTPUT_PERCENT) / 100;
     }
 
-    pid_output_IRR = (int)IR_ApplyIMUAssist(pid_output_IRR, err);
+    pid_output_IRR =
+        (int)IR_ApplyIMUAssist(pid_output_IRR, s_line_error);
 
-    Motion_Car_Control(IRR_SPEED, 0, pid_output_IRR);
+    actual_speed = s_ir_base_speed;
+    abs_error = (s_line_error >= 0) ?
+                s_line_error : (int8_t)(-s_line_error);
+
+    if ((abs_error >= IR_CURVE_ERROR_THRESHOLD) &&
+        (actual_speed > IR_SPEED_CURVE))
+    {
+        actual_speed = IR_SPEED_CURVE;
+    }
+
+    if (IMU_IsOnline() && IMU_IsCalibrated())
+    {
+        yaw_rate_abs = IMU_GetGyroZDps();
+        if (yaw_rate_abs < 0.0f)
+        {
+            yaw_rate_abs = -yaw_rate_abs;
+        }
+
+        if ((yaw_rate_abs >= IR_CURVE_YAW_RATE_DPS) &&
+            (actual_speed > IR_SPEED_CURVE))
+        {
+            actual_speed = IR_SPEED_CURVE;
+        }
+    }
+
+    Motion_Car_Control(actual_speed, 0, pid_output_IRR);
 }

@@ -131,6 +131,12 @@ extern "C" {
 
 
 
+/* Port definition for Pin Group KEY_GPIO */
+#define KEY_GPIO_PORT                                                    (GPIOA)
+
+/* Defines for START_KEY: GPIOA.2 with pinCMx 7 on package pin 42 */
+#define KEY_GPIO_START_KEY_PIN                                   (DL_GPIO_PIN_2)
+#define KEY_GPIO_START_KEY_IOMUX                                  (IOMUX_PINCM7)
 /* Port definition for Pin Group IR_GPIO */
 #define IR_GPIO_PORT                                                     (GPIOA)
 

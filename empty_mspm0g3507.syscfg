@@ -11,6 +11,7 @@
  */
 const GPIO          = scripting.addModule("/ti/driverlib/GPIO", {}, false);
 const GPIO1         = GPIO.addInstance();
+const GPIO2         = GPIO.addInstance();
 const SYSCTL        = scripting.addModule("/ti/driverlib/SYSCTL");
 const UART          = scripting.addModule("/ti/driverlib/UART", {}, false);
 const UART1         = UART.addInstance();
@@ -37,6 +38,12 @@ const Board                       = scripting.addModule("/ti/driverlib/Board", {
 Board.peripheral.$assign          = "DEBUGSS";
 Board.peripheral.swclkPin.$assign = "PA20";
 Board.peripheral.swdioPin.$assign = "PA19";
+
+GPIO2.$name                              = "KEY_GPIO";
+GPIO2.associatedPins[0].$name            = "START_KEY";
+GPIO2.associatedPins[0].direction        = "INPUT";
+GPIO2.associatedPins[0].internalResistor = "PULL_UP";
+GPIO2.associatedPins[0].pin.$assign      = "PA2";
 
 SYSCTL.clockTreeEn = true;
 
@@ -95,8 +102,8 @@ UART3.rxPinConfig.$name                = "ti_driverlib_gpio_GPIOPinGeneric7";
 ProjectConfig.deviceSpin = "MSPM0G3507";
 
 /**
- * Pinmux solution for unlocked pins/peripherals.
+ * Pinmux solution for unlocked pins/peripherals. This ensures that minor changes to the automatic solver in a future
+ * version of the tool will not impact the pinmux you originally saw.  These lines can be completely deleted in order to
+ * re-solve from scratch.
  */
-UART2.peripheral.$suggestSolution        = "UART3";
-UART3.peripheral.rxPin.$suggestSolution  = "PA22";
-UART3.peripheral.txPin.$suggestSolution  = "PA21";
+UART2.peripheral.$suggestSolution = "UART3";
