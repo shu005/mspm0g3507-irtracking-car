@@ -126,22 +126,22 @@ extern "C" {
 #define UART_IMU_BAUD_RATE                                              (115200)
 #define UART_IMU_IBRD_32_MHZ_115200_BAUD                                    (17)
 #define UART_IMU_FBRD_32_MHZ_115200_BAUD                                    (23)
-/* Defines for UART_K230 */
-#define UART_K230_INST                                                     UART2
-#define UART_K230_INST_FREQUENCY                                        32000000
-#define UART_K230_INST_IRQHandler                               UART2_IRQHandler
-#define UART_K230_INST_INT_IRQN                                   UART2_INT_IRQn
-#define GPIO_UART_K230_RX_PORT                                             GPIOA
-#define GPIO_UART_K230_TX_PORT                                             GPIOA
-#define GPIO_UART_K230_RX_PIN                                     DL_GPIO_PIN_22
-#define GPIO_UART_K230_TX_PIN                                     DL_GPIO_PIN_21
-#define GPIO_UART_K230_IOMUX_RX                                  (IOMUX_PINCM47)
-#define GPIO_UART_K230_IOMUX_TX                                  (IOMUX_PINCM46)
-#define GPIO_UART_K230_IOMUX_RX_FUNC                   IOMUX_PINCM47_PF_UART2_RX
-#define GPIO_UART_K230_IOMUX_TX_FUNC                   IOMUX_PINCM46_PF_UART2_TX
-#define UART_K230_BAUD_RATE                                             (115200)
-#define UART_K230_IBRD_32_MHZ_115200_BAUD                                   (17)
-#define UART_K230_FBRD_32_MHZ_115200_BAUD                                   (23)
+/* Defines for UART_IR */
+#define UART_IR_INST                                                       UART2
+#define UART_IR_INST_FREQUENCY                                          32000000
+#define UART_IR_INST_IRQHandler                                 UART2_IRQHandler
+#define UART_IR_INST_INT_IRQN                                     UART2_INT_IRQn
+#define GPIO_UART_IR_RX_PORT                                               GPIOA
+#define GPIO_UART_IR_TX_PORT                                               GPIOA
+#define GPIO_UART_IR_RX_PIN                                       DL_GPIO_PIN_22
+#define GPIO_UART_IR_TX_PIN                                       DL_GPIO_PIN_21
+#define GPIO_UART_IR_IOMUX_RX                                    (IOMUX_PINCM47)
+#define GPIO_UART_IR_IOMUX_TX                                    (IOMUX_PINCM46)
+#define GPIO_UART_IR_IOMUX_RX_FUNC                     IOMUX_PINCM47_PF_UART2_RX
+#define GPIO_UART_IR_IOMUX_TX_FUNC                     IOMUX_PINCM46_PF_UART2_TX
+#define UART_IR_BAUD_RATE                                               (115200)
+#define UART_IR_IBRD_32_MHZ_115200_BAUD                                     (17)
+#define UART_IR_FBRD_32_MHZ_115200_BAUD                                     (23)
 
 
 
@@ -153,21 +153,6 @@ extern "C" {
 /* Defines for START_KEY: GPIOA.2 with pinCMx 7 on package pin 42 */
 #define KEY_GPIO_START_KEY_PIN                                   (DL_GPIO_PIN_2)
 #define KEY_GPIO_START_KEY_IOMUX                                  (IOMUX_PINCM7)
-/* Port definition for Pin Group IR_GPIO */
-#define IR_GPIO_PORT                                                     (GPIOA)
-
-/* Defines for IR_AD0: GPIOA.14 with pinCMx 36 on package pin 7 */
-#define IR_GPIO_IR_AD0_PIN                                      (DL_GPIO_PIN_14)
-#define IR_GPIO_IR_AD0_IOMUX                                     (IOMUX_PINCM36)
-/* Defines for IR_AD1: GPIOA.15 with pinCMx 37 on package pin 8 */
-#define IR_GPIO_IR_AD1_PIN                                      (DL_GPIO_PIN_15)
-#define IR_GPIO_IR_AD1_IOMUX                                     (IOMUX_PINCM37)
-/* Defines for IR_AD2: GPIOA.16 with pinCMx 38 on package pin 9 */
-#define IR_GPIO_IR_AD2_PIN                                      (DL_GPIO_PIN_16)
-#define IR_GPIO_IR_AD2_IOMUX                                     (IOMUX_PINCM38)
-/* Defines for IR_OUT: GPIOA.17 with pinCMx 39 on package pin 10 */
-#define IR_GPIO_IR_OUT_PIN                                      (DL_GPIO_PIN_17)
-#define IR_GPIO_IR_OUT_IOMUX                                     (IOMUX_PINCM39)
 
 
 /* clang-format on */
@@ -179,7 +164,7 @@ void SYSCFG_DL_SYSCTL_init(void);
 void SYSCFG_DL_I2C_0_init(void);
 void SYSCFG_DL_UART_1_init(void);
 void SYSCFG_DL_UART_IMU_init(void);
-void SYSCFG_DL_UART_K230_init(void);
+void SYSCFG_DL_UART_IR_init(void);
 
 
 bool SYSCFG_DL_saveConfiguration(void);

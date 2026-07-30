@@ -14,9 +14,11 @@
 #include "app_task2_display.h"
 #include "app_oled.h"
 #include "app_task2.h"
+#include "app_irtracking.h"
 #include "app_timebase.h"
 
 #include <stdint.h>
+#include <stdio.h>
 
 #define TASK2_DISPLAY_REFRESH_MS        100U
 #define TASK2_TIME_FIRST_PAGE             3U
@@ -157,6 +159,7 @@ static void Task2_DrawBigTime(uint32_t elapsed_ms)
 static void Task2_DrawStatePage(void)
 {
     uint32_t display_ms = Task2_DisplayTimeMs();
+    char ir_buf[12];
 
     OLED_Clear();
     OLED_DrawRectangle(0U, 0U, OLED_WIDTH, OLED_HEIGHT, true);
@@ -193,6 +196,11 @@ static void Task2_DrawStatePage(void)
             }
             break;
     }
+
+    /* IR diagnostic: frame count on page 2 */
+    snprintf(ir_buf, sizeof(ir_buf), "IR:%04lu",
+             (unsigned long)g_ir_scan_count);
+    OLED_ShowString(44U, 2U, ir_buf);
 
     Task2_DrawBigTime(display_ms);
 }
@@ -276,6 +284,22 @@ void Task2_DisplayProcess(void)
         }
 
         s_last_centiseconds = centiseconds;
+    }
+
+    /* Also refresh IR diagnostic count every cycle so it updates live. */
+    {
+        char ir_buf[12];
+
+        OLED_ShowString(44U, 2U, "       ");
+        snprintf(ir_buf, sizeof(ir_buf), "IR:%04lu",
+                 (unsigned long)g_ir_scan_count);
+        OLED_ShowString(44U, 2U, ir_buf);
+
+        if (!OLED_RefreshPages(2U, 1U))
+        {
+            s_display_online = false;
+            return;
+        }
     }
 
     s_last_refresh_ms = now_ms;

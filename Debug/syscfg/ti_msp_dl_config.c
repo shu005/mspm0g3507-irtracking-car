@@ -55,7 +55,7 @@ SYSCONFIG_WEAK void SYSCFG_DL_init(void)
     SYSCFG_DL_I2C_0_init();
     SYSCFG_DL_UART_1_init();
     SYSCFG_DL_UART_IMU_init();
-    SYSCFG_DL_UART_K230_init();
+    SYSCFG_DL_UART_IR_init();
     /* Ensure backup structures have no valid state */
 	gUART_IMUBackup.backupRdy 	= false;
 
@@ -90,14 +90,14 @@ SYSCONFIG_WEAK void SYSCFG_DL_initPower(void)
     DL_I2C_reset(I2C_0_INST);
     DL_UART_Main_reset(UART_1_INST);
     DL_UART_Main_reset(UART_IMU_INST);
-    DL_UART_Main_reset(UART_K230_INST);
+    DL_UART_Main_reset(UART_IR_INST);
 
     DL_GPIO_enablePower(GPIOA);
     DL_GPIO_enablePower(GPIOB);
     DL_I2C_enablePower(I2C_0_INST);
     DL_UART_Main_enablePower(UART_1_INST);
     DL_UART_Main_enablePower(UART_IMU_INST);
-    DL_UART_Main_enablePower(UART_K230_INST);
+    DL_UART_Main_enablePower(UART_IR_INST);
     delay_cycles(POWER_STARTUP_DELAY);
 }
 
@@ -124,30 +124,14 @@ SYSCONFIG_WEAK void SYSCFG_DL_GPIO_init(void)
     DL_GPIO_initPeripheralInputFunction(
         GPIO_UART_IMU_IOMUX_RX, GPIO_UART_IMU_IOMUX_RX_FUNC);
     DL_GPIO_initPeripheralOutputFunction(
-        GPIO_UART_K230_IOMUX_TX, GPIO_UART_K230_IOMUX_TX_FUNC);
+        GPIO_UART_IR_IOMUX_TX, GPIO_UART_IR_IOMUX_TX_FUNC);
     DL_GPIO_initPeripheralInputFunction(
-        GPIO_UART_K230_IOMUX_RX, GPIO_UART_K230_IOMUX_RX_FUNC);
+        GPIO_UART_IR_IOMUX_RX, GPIO_UART_IR_IOMUX_RX_FUNC);
 
     DL_GPIO_initDigitalInputFeatures(KEY_GPIO_START_KEY_IOMUX,
 		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_PULL_UP,
 		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
 
-    DL_GPIO_initDigitalOutput(IR_GPIO_IR_AD0_IOMUX);
-
-    DL_GPIO_initDigitalOutput(IR_GPIO_IR_AD1_IOMUX);
-
-    DL_GPIO_initDigitalOutput(IR_GPIO_IR_AD2_IOMUX);
-
-    DL_GPIO_initDigitalInputFeatures(IR_GPIO_IR_OUT_IOMUX,
-		 DL_GPIO_INVERSION_DISABLE, DL_GPIO_RESISTOR_NONE,
-		 DL_GPIO_HYSTERESIS_DISABLE, DL_GPIO_WAKEUP_DISABLE);
-
-    DL_GPIO_clearPins(GPIOA, IR_GPIO_IR_AD0_PIN |
-		IR_GPIO_IR_AD1_PIN |
-		IR_GPIO_IR_AD2_PIN);
-    DL_GPIO_enableOutput(GPIOA, IR_GPIO_IR_AD0_PIN |
-		IR_GPIO_IR_AD1_PIN |
-		IR_GPIO_IR_AD2_PIN);
 
 }
 
@@ -267,12 +251,12 @@ SYSCONFIG_WEAK void SYSCFG_DL_UART_IMU_init(void)
 
     DL_UART_Main_enable(UART_IMU_INST);
 }
-static const DL_UART_Main_ClockConfig gUART_K230ClockConfig = {
+static const DL_UART_Main_ClockConfig gUART_IRClockConfig = {
     .clockSel    = DL_UART_MAIN_CLOCK_BUSCLK,
     .divideRatio = DL_UART_MAIN_CLOCK_DIVIDE_RATIO_1
 };
 
-static const DL_UART_Main_Config gUART_K230Config = {
+static const DL_UART_Main_Config gUART_IRConfig = {
     .mode        = DL_UART_MAIN_MODE_NORMAL,
     .direction   = DL_UART_MAIN_DIRECTION_TX_RX,
     .flowControl = DL_UART_MAIN_FLOW_CONTROL_NONE,
@@ -281,25 +265,29 @@ static const DL_UART_Main_Config gUART_K230Config = {
     .stopBits    = DL_UART_MAIN_STOP_BITS_ONE
 };
 
-SYSCONFIG_WEAK void SYSCFG_DL_UART_K230_init(void)
+SYSCONFIG_WEAK void SYSCFG_DL_UART_IR_init(void)
 {
-    DL_UART_Main_setClockConfig(UART_K230_INST, (DL_UART_Main_ClockConfig *) &gUART_K230ClockConfig);
+    DL_UART_Main_setClockConfig(UART_IR_INST, (DL_UART_Main_ClockConfig *) &gUART_IRClockConfig);
 
-    DL_UART_Main_init(UART_K230_INST, (DL_UART_Main_Config *) &gUART_K230Config);
+    DL_UART_Main_init(UART_IR_INST, (DL_UART_Main_Config *) &gUART_IRConfig);
     /*
      * Configure baud rate by setting oversampling and baud rate divisors.
      *  Target baud rate: 115200
      *  Actual baud rate: 115211.52
      */
-    DL_UART_Main_setOversampling(UART_K230_INST, DL_UART_OVERSAMPLING_RATE_16X);
-    DL_UART_Main_setBaudRateDivisor(UART_K230_INST, UART_K230_IBRD_32_MHZ_115200_BAUD, UART_K230_FBRD_32_MHZ_115200_BAUD);
+    DL_UART_Main_setOversampling(UART_IR_INST, DL_UART_OVERSAMPLING_RATE_16X);
+    DL_UART_Main_setBaudRateDivisor(UART_IR_INST, UART_IR_IBRD_32_MHZ_115200_BAUD, UART_IR_FBRD_32_MHZ_115200_BAUD);
 
 
     /* Configure Interrupts */
-    DL_UART_Main_enableInterrupt(UART_K230_INST,
+    DL_UART_Main_enableInterrupt(UART_IR_INST,
                                  DL_UART_MAIN_INTERRUPT_RX);
 
+    /* Configure FIFOs */
+    DL_UART_Main_enableFIFOs(UART_IR_INST);
+    DL_UART_Main_setRXFIFOThreshold(UART_IR_INST, DL_UART_RX_FIFO_LEVEL_ONE_ENTRY);
+    DL_UART_Main_setTXFIFOThreshold(UART_IR_INST, DL_UART_TX_FIFO_LEVEL_1_2_EMPTY);
 
-    DL_UART_Main_enable(UART_K230_INST);
+    DL_UART_Main_enable(UART_IR_INST);
 }
 

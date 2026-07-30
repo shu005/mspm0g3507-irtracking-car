@@ -1,34 +1,42 @@
 /*
- * app_irtracking.c - 8-channel GPIO-multiplexed IR tracking implementation
+ * app_irtracking.c - UART-based 8-channel IR tracking module
  *
- * Hardware connection:
- *   IR AD0 -> MSPM0 PA14
- *   IR AD1 -> MSPM0 PA15
- *   IR AD2 -> MSPM0 PA16
- *   IR OUT -> MSPM0 PA17
- *   IR 5V  -> 5V
- *   IR GND -> GND
+ * Protocol:
+ *   MCU -> Module:  $0,0,1#
+ *   Module -> MCU:  $D,x1:0,x2:0,x3:0,x4:0,x5:0,x6:0,x7:0,x8:0#
  *
- * Module truth table:
- *   AD2 AD1 AD0 = 000 -> CH1
- *   AD2 AD1 AD0 = 001 -> CH2
- *   ...
- *   AD2 AD1 AD0 = 111 -> CH8
+ *   Module value convention: 0 = white, 1 = black.
+ *   This driver inverts to the legacy convention: 0 = black, 1 = white.
  *
- * SysConfig performs IOMUX and direction initialization. The scan timing and
- * active level follow the manufacturer MSPM0 reference implementation.
+ * Hardware:
+ *   MCU TX (PA21) -> Module RX
+ *   MCU RX (PA22) -> Module TX
+ *   UART2 peripheral, SysConfig instance name "UART_IR"
  */
 
 #include "app_irtracking.h"
 #include "app_motor.h"
 #include "app_imu.h"
+#include "ti_msp_dl_config.h"
 
-/* ========== SysConfig-generated hardware mapping ========== */
-#define IR_HW_PORT      IR_GPIO_PORT
-#define IR_AD0_PIN      IR_GPIO_IR_AD0_PIN
-#define IR_AD1_PIN      IR_GPIO_IR_AD1_PIN
-#define IR_AD2_PIN      IR_GPIO_IR_AD2_PIN
-#define IR_OUT_PIN      IR_GPIO_IR_OUT_PIN
+#include <string.h>
+
+/* SysConfig instance name must be UART_IR. */
+#ifndef IR_UART_INST
+#define IR_UART_INST       UART_IR_INST
+#endif
+
+#ifndef IR_UART_IRQN
+#define IR_UART_IRQN       UART_IR_INST_INT_IRQN
+#endif
+
+#define IR_RX_BUF_SIZE     256U
+#define IR_RX_BUF_MASK     ((IR_RX_BUF_SIZE) - 1U)
+#define IR_FRAME_BUF_SIZE   64U
+
+#if ((IR_RX_BUF_SIZE & (IR_RX_BUF_SIZE - 1U)) != 0U)
+#error "IR_RX_BUF_SIZE must be a power of two"
+#endif
 
 /* ========== Right-angle corner parameters ========== */
 #if (IR_H_OVAL_TRACK_MODE == 0U)
@@ -51,13 +59,37 @@ volatile uint8_t  g_ir_black_mask  = 0x00U;
 volatile uint8_t  g_ir_black_count = 0U;
 volatile int8_t   g_ir_error       = 0;
 volatile uint32_t g_ir_scan_count  = 0U;
-volatile uint8_t  g_ir_last_channel = 0U;
+volatile uint8_t  g_ir_last_channel = 0xFFU;
 
+/* ========== UART receive ring buffer ========== */
+static volatile uint8_t  s_rx_buf[IR_RX_BUF_SIZE];
+static volatile uint16_t s_rx_head = 0U;
+static volatile uint16_t s_rx_tail = 0U;
+
+/* ========== Frame assembly ========== */
+static char    s_frame_buf[IR_FRAME_BUF_SIZE];
+static uint8_t s_frame_idx = 0U;
+
+/* ========== Latest parsed sensor values ========== */
+/* Module convention: 0 = white, 1 = black; x1 at index 0. */
+static volatile uint8_t  s_ir_raw_values[8];
+static volatile bool     s_ir_frame_valid = false;
+static volatile uint16_t s_ir_frame_age_ms = 0xFFFFU;
+
+/*
+ * Frame ID: incremented each time a valid $D frame is parsed.
+ * LineWalking reads this to detect fresh data and avoid
+ * re-running PID on the same sensor values.
+ */
+volatile uint32_t g_ir_frame_id = 0U;
+
+/* ========== PID and tracking state ========== */
 static int32_t IRTrack_Integral = 0;
 static int8_t  error_last = 0;
 static int8_t  s_line_error = 0;
 static int16_t s_ir_base_speed = IR_SPEED_FAST;
 
+/* ========== Forward declarations ========== */
 static void IR_ResetPIDState(void);
 static int32_t IR_ApplyIMUAssist(int32_t ir_output, int8_t error);
 #if (IR_H_OVAL_TRACK_MODE == 0U)
@@ -65,91 +97,239 @@ static void IR_CornerTurnLeft(void);
 static void IR_CornerTurnRight(void);
 #endif
 
-static void IR_WriteAddressPin(uint32_t pin, bool high)
+/* UART helpers */
+static void IR_RxPushFromISR(uint8_t byte);
+static bool IR_RxPop(uint8_t *byte);
+static void IR_SendString(const char *str);
+static void IR_ParseByte(uint8_t byte);
+static void IR_ParseFrame(const char *frame);
+
+/* ========== Initialization ========== */
+
+void IR_Init(void)
 {
-    if (high)
+    uint8_t i;
+
+    s_rx_head = 0U;
+    s_rx_tail = 0U;
+    s_frame_idx = 0U;
+    s_ir_frame_valid = false;
+    s_ir_frame_age_ms = 0xFFFFU;
+
+    for (i = 0U; i < 8U; i++)
     {
-        DL_GPIO_setPins(IR_HW_PORT, pin);
+        s_ir_raw_values[i] = 0U;
     }
-    else
+
+    g_ir_raw_data    = 0xFFU;
+    g_ir_line_data   = 0xFFU;
+    g_ir_black_mask  = 0x00U;
+    g_ir_black_count = 0U;
+    g_ir_error       = 0;
+    g_ir_scan_count  = 0U;
+    g_ir_last_channel = 0xFFU;
+
+    IR_ResetController();
+
+    /* Flush any stale bytes from the RX FIFO. */
+    while (!DL_UART_Main_isRXFIFOEmpty(IR_UART_INST))
     {
-        DL_GPIO_clearPins(IR_HW_PORT, pin);
+        (void)DL_UART_Main_receiveData(IR_UART_INST);
+    }
+
+    /* Enable RX interrupt. SysConfig already configures the UART peripheral. */
+    DL_UART_Main_enableInterrupt(IR_UART_INST, DL_UART_MAIN_INTERRUPT_RX);
+    NVIC_ClearPendingIRQ(IR_UART_IRQN);
+    NVIC_EnableIRQ(IR_UART_IRQN);
+    __enable_irq();
+
+    /* Request digital data stream from the module. */
+    IR_SendString("$0,0,1#");
+}
+
+/* ========== Main-loop processing ========== */
+
+void IR_Process(void)
+{
+    uint8_t byte;
+
+    while (IR_RxPop(&byte))
+    {
+        IR_ParseByte(byte);
     }
 }
 
-void IR_SelectChannel(uint8_t channel)
+void IR_Tick(uint16_t elapsed_ms)
 {
-    channel &= 0x07U;
-
-    IR_WriteAddressPin(IR_AD0_PIN, (channel & 0x01U) != 0U);
-    IR_WriteAddressPin(IR_AD1_PIN, (channel & 0x02U) != 0U);
-    IR_WriteAddressPin(IR_AD2_PIN, (channel & 0x04U) != 0U);
-
-    g_ir_last_channel = channel;
-
-    /* Allow the analog switch/comparator output to settle. */
-    delay_cycles(IR_MUX_SETTLE_CYCLES);
+    if (s_ir_frame_age_ms < 0xFFFFU)
+    {
+        uint32_t age = (uint32_t)s_ir_frame_age_ms + (uint32_t)elapsed_ms;
+        s_ir_frame_age_ms = (age > 0xFFFFU) ? 0xFFFFU : (uint16_t)age;
+    }
 }
 
-uint8_t IR_ReadChannelRaw(uint8_t channel)
+/* ========== UART send / receive ========== */
+
+static void IR_SendString(const char *str)
 {
-    uint8_t high_count = 0U;
-    uint8_t sample;
-
-    IR_SelectChannel(channel);
-
-    for (sample = 0U; sample < IR_GPIO_SAMPLE_COUNT; sample++)
+    while (*str != '\0')
     {
-        if (DL_GPIO_readPins(IR_HW_PORT, IR_OUT_PIN) != 0U)
+        DL_UART_transmitDataBlocking(IR_UART_INST, (uint8_t)*str);
+        str++;
+    }
+}
+
+static void IR_RxPushFromISR(uint8_t byte)
+{
+    uint16_t next = (uint16_t)((s_rx_head + 1U) & IR_RX_BUF_MASK);
+
+    if (next == s_rx_tail)
+    {
+        return; /* Buffer full, drop byte. */
+    }
+
+    s_rx_buf[s_rx_head] = byte;
+    s_rx_head = next;
+}
+
+static bool IR_RxPop(uint8_t *byte)
+{
+    if (s_rx_tail == s_rx_head)
+    {
+        return false;
+    }
+
+    *byte = s_rx_buf[s_rx_tail];
+    s_rx_tail = (uint16_t)((s_rx_tail + 1U) & IR_RX_BUF_MASK);
+    return true;
+}
+
+/* ========== Frame parser ========== */
+
+static void IR_ParseByte(uint8_t byte)
+{
+    char c = (char)byte;
+
+    /* '$' always starts a new frame, discarding any partial previous one. */
+    if (c == '$')
+    {
+        s_frame_idx = 0U;
+        s_frame_buf[0] = c;
+        s_frame_idx = 1U;
+        return;
+    }
+
+    /* Ignore bytes received before the first '$'. */
+    if (s_frame_idx == 0U)
+    {
+        return;
+    }
+
+    /* Append to frame buffer if space permits. */
+    if (s_frame_idx < (IR_FRAME_BUF_SIZE - 1U))
+    {
+        s_frame_buf[s_frame_idx] = c;
+        s_frame_idx++;
+    }
+
+    /* '#', '\n', or '\r' terminates a frame. */
+    if ((c == '#') || (c == '\n') || (c == '\r'))
+    {
+        s_frame_buf[s_frame_idx] = '\0';
+        IR_ParseFrame(s_frame_buf);
+        s_frame_idx = 0U;
+    }
+}
+
+/*
+ * Parse a digital-data frame: $D,x1:V,x2:V,x3:V,x4:V,x5:V,x6:V,x7:V,x8:V#
+ * V is '0' (white) or '1' (black).
+ *
+ * The parser is deliberately strict: any format deviation causes the frame
+ * to be silently dropped, preventing corrupted data from steering the car.
+ */
+static void IR_ParseFrame(const char *frame)
+{
+    uint8_t values[8];
+    int     field;
+    const char *p = frame;
+
+    /* Must start with "$D,". */
+    if ((p[0] != '$') || (p[1] != 'D') || (p[2] != ','))
+    {
+        return;
+    }
+
+    p += 3; /* Skip "$D," */
+
+    for (field = 0; field < 8; field++)
+    {
+        /* Expect "x" */
+        if (*p != 'x')
         {
-            high_count++;
+            return;
+        }
+        p++;
+
+        /* Skip sensor number digit(s) */
+        while ((*p >= '0') && (*p <= '9'))
+        {
+            p++;
         }
 
-        if ((sample + 1U) < IR_GPIO_SAMPLE_COUNT)
+        /* Expect ":" */
+        if (*p != ':')
         {
-            delay_cycles(IR_GPIO_SAMPLE_GAP_CYCLES);
+            return;
+        }
+        p++;
+
+        /* Parse value: '0' or '1' */
+        if (*p == '0')
+        {
+            values[field] = 0U;
+        }
+        else if (*p == '1')
+        {
+            values[field] = 1U;
+        }
+        else
+        {
+            return;
+        }
+        p++;
+
+        /* Expect ',' (fields 0-6) or '#' (field 7) */
+        if (field < 7)
+        {
+            if (*p != ',')
+            {
+                return;
+            }
+            p++;
         }
     }
 
-    return (high_count > (IR_GPIO_SAMPLE_COUNT / 2U)) ? 1U : 0U;
-}
-
-uint8_t IR_ReadAllRaw(void)
-{
-    uint8_t data = 0U;
-    uint8_t logical_index;
-
-    for (logical_index = 0U; logical_index < 8U; logical_index++)
+    /* Store parsed values atomically. */
+    for (field = 0; field < 8; field++)
     {
-        uint8_t physical_channel;
-        uint8_t raw_level;
-        uint8_t bit_position = (uint8_t)(7U - logical_index);
-
-#if IR_CH1_IS_LEFTMOST
-        physical_channel = logical_index;
-#else
-        physical_channel = (uint8_t)(7U - logical_index);
-#endif
-
-        raw_level = IR_ReadChannelRaw(physical_channel);
-
-        if (raw_level != 0U)
-        {
-            data |= (uint8_t)(1U << bit_position);
-        }
+        s_ir_raw_values[field] = values[field];
     }
 
-    g_ir_raw_data = data;
+    s_ir_frame_valid = true;
+    s_ir_frame_age_ms = 0U;
     g_ir_scan_count++;
-    return data;
+    g_ir_frame_id++;
 }
+
+/* ========== deal_IRdata (reads cached UART frame) ========== */
 
 bool deal_IRdata(u8 *x1, u8 *x2, u8 *x3, u8 *x4,
                  u8 *x5, u8 *x6, u8 *x7, u8 *x8)
 {
-    uint8_t raw_data;
+    uint8_t raw_data  = 0U;
     uint8_t line_data = 0U;
-    uint8_t bit_position;
+    uint8_t i;
 
     if ((x1 == 0) || (x2 == 0) || (x3 == 0) || (x4 == 0) ||
         (x5 == 0) || (x6 == 0) || (x7 == 0) || (x8 == 0))
@@ -157,20 +337,49 @@ bool deal_IRdata(u8 *x1, u8 *x2, u8 *x3, u8 *x4,
         return false;
     }
 
-    raw_data = IR_ReadAllRaw();
-
-    /* Normalize to the old program's convention: 0 = black, 1 = white. */
-    for (bit_position = 0U; bit_position < 8U; bit_position++)
+    /* Safety: no valid frame within the timeout window. */
+    if (!s_ir_frame_valid ||
+        (s_ir_frame_age_ms > (uint16_t)IR_FRAME_TIMEOUT_MS))
     {
-        uint8_t raw_level = (uint8_t)((raw_data >> bit_position) & 0x01U);
-        uint8_t normalized_level =
-            (raw_level == IR_BLACK_LEVEL) ? 0U : 1U;
-
-        line_data |= (uint8_t)(normalized_level << bit_position);
+        return false;
     }
 
+    /*
+     * Build raw_data and line_data from the cached module values.
+     *
+     * Module convention: 1 = black
+     * Legacy convention:  0 = black
+     *
+     * raw_data:  bit = 1 when module reports black (matches g_ir_black_mask)
+     * line_data: bit = 0 when module reports black (legacy)
+     */
+    for (i = 0U; i < 8U; i++)
+    {
+        uint8_t sensor_idx;
+        uint8_t bit_pos = (uint8_t)(7U - i); /* x1 at bit7 */
+
+#if IR_SENSOR_REVERSE
+        sensor_idx = (uint8_t)(7U - i);
+#else
+        sensor_idx = i;
+#endif
+
+        if (s_ir_raw_values[sensor_idx] != 0U)
+        {
+            /* Module says black: set bit in raw_data, clear bit in line_data. */
+            raw_data |= (uint8_t)(1U << bit_pos);
+            /* line_data bit stays 0 → legacy "0 = black" */
+        }
+        else
+        {
+            /* Module says white: set bit in line_data. */
+            line_data |= (uint8_t)(1U << bit_pos);
+        }
+    }
+
+    g_ir_raw_data   = raw_data;
     g_ir_line_data  = line_data;
-    g_ir_black_mask = (uint8_t)(~line_data);
+    g_ir_black_mask = raw_data; /* 1 = black */
 
     *x1 = (u8)((line_data >> 7) & 0x01U);
     *x2 = (u8)((line_data >> 6) & 0x01U);
@@ -183,6 +392,8 @@ bool deal_IRdata(u8 *x1, u8 *x2, u8 *x3, u8 *x4,
 
     return true;
 }
+
+/* ========== PID controller ========== */
 
 static void IR_ResetPIDState(void)
 {
@@ -244,6 +455,8 @@ int32_t PID_IR_Calc(int8_t actual_value)
     return output;
 }
 
+/* ========== IMU angular-rate damping ========== */
+
 static int32_t IR_ApplyIMUAssist(int32_t ir_output, int8_t error)
 {
 #if IMU_ASSIST_ENABLE
@@ -280,6 +493,8 @@ static int32_t IR_ApplyIMUAssist(int32_t ir_output, int8_t error)
 #endif
 }
 
+/* ========== Right-angle corner handling (disabled in oval-track mode) ========== */
+
 #if (IR_H_OVAL_TRACK_MODE == 0U)
 static void IR_CornerTurnLeft(void)
 {
@@ -302,8 +517,6 @@ static void IR_CornerTurnLeft(void)
             return;
         }
 
-        /* Exit when the extreme-left pattern has eased and the line has
-         * re-entered the inner sensor area. */
         if (!(x1 == 0U && x2 == 0U && x3 == 0U && x4 == 0U))
         {
             if (x2 == 0U || x3 == 0U || x4 == 0U ||
@@ -336,8 +549,6 @@ static void IR_CornerTurnRight(void)
             return;
         }
 
-        /* Exit when the extreme-right pattern has eased and the line has
-         * re-entered the inner sensor area. */
         if (!(x5 == 0U && x6 == 0U && x7 == 0U && x8 == 0U))
         {
             if (x2 == 0U || x3 == 0U || x4 == 0U ||
@@ -349,6 +560,8 @@ static void IR_CornerTurnRight(void)
     }
 }
 #endif
+
+/* ========== LineWalking — centroid-based PID tracking ========== */
 
 void LineWalking(void)
 {
@@ -471,4 +684,23 @@ void LineWalking(void)
     }
 
     Motion_Car_Control(actual_speed, 0, pid_output_IRR);
+}
+
+/* ========== UART interrupt handler ========== */
+
+void UART_IR_INST_IRQHandler(void)
+{
+    switch (DL_UART_Main_getPendingInterrupt(IR_UART_INST))
+    {
+        case DL_UART_MAIN_IIDX_RX:
+            while (!DL_UART_Main_isRXFIFOEmpty(IR_UART_INST))
+            {
+                IR_RxPushFromISR(
+                    (uint8_t)DL_UART_Main_receiveData(IR_UART_INST));
+            }
+            break;
+
+        default:
+            break;
+    }
 }

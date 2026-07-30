@@ -36,6 +36,7 @@ static void App_AdvanceTaskTime(uint32_t elapsed_ms)
                          60000U : (uint16_t)elapsed_ms;
 
         IMU_Tick(chunk);
+        IR_Tick(chunk);
         Task2_Tick(chunk);
         elapsed_ms -= chunk;
     }
@@ -59,6 +60,7 @@ int main(void)
     IMU_Init();
     IMU_StartGyroCalibration(40U);
 
+    IR_Init();
     Task2_Init();
     g_startup_stage = 4U;
 
@@ -80,6 +82,7 @@ int main(void)
         App_AdvanceTaskTime(elapsed_ms);
 
         IMU_Process();
+        IR_Process();
         Task2_Process();
         Task2_DisplayProcess();
 
