@@ -45,7 +45,7 @@
  * Set to 1 if the car steers opposite to the line direction.
  * Set to 0 for normal order (x1 = leftmost sensor).
  */
-#define IR_SENSOR_REVERSE              1U
+#define IR_SENSOR_REVERSE              0U
 
 /* ========== UART receive configuration ========== */
 /*

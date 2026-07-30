@@ -364,7 +364,7 @@ bool deal_IRdata(u8 *x1, u8 *x2, u8 *x3, u8 *x4,
         sensor_idx = i;
 #endif
 
-        if (s_ir_raw_values[sensor_idx] != 0U)
+        if (s_ir_raw_values[sensor_idx] == 0U)
         {
             /* Module says black: set bit in raw_data, clear bit in line_data. */
             raw_data |= (uint8_t)(1U << bit_pos);
