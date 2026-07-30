@@ -1,10 +1,11 @@
 /*
  * empty_mspm0g3507.c
  *
- * H题要求2专用主程序：
- *   上电静止 -> 按键启动 -> 顺时针一圈 -> 回到A点停车
- *
- * 当前版本暂不接OLED，也不运行K230和滚球控制状态机。
+ * H task 2:
+ *   Power on and stay still
+ *   -> K1 starts the car and timer
+ *   -> complete one clockwise lap
+ *   -> detect A marker, stop car and freeze final time
  */
 
 #include "app_common.h"
@@ -13,64 +14,81 @@
 #include "app_irtracking.h"
 #include "app_imu.h"
 #include "app_task2.h"
+#include "app_oled.h"
+#include "app_task2_display.h"
+#include "app_timebase.h"
 
 #define CONTROL_LOOP_MS              IR_CONTROL_LOOP_MS
 #define MOTOR_DRIVER_BOOT_DELAY_MS   1500U
 
-/*
- * CCS Expressions中可观察：
- * 0 = 尚未进入main
- * 1 = SysConfig初始化完成
- * 2 = 电机UART初始化完成
- * 3 = 电机驱动板启动等待完成，已发送停车指令
- * 4 = 要求2状态机初始化完成
- * 5 = 已进入主循环，等待启动按键
- */
 volatile uint8_t g_startup_stage = 0U;
+volatile uint8_t g_display_online = 0U;
+
+static void App_AdvanceTaskTime(uint32_t elapsed_ms)
+{
+    /*
+     * Both existing Tick interfaces use uint16_t. Splitting also makes the
+     * code safe if execution was paused in the debugger for over 65 seconds.
+     */
+    while (elapsed_ms > 0U)
+    {
+        uint16_t chunk = (elapsed_ms > 60000U) ?
+                         60000U : (uint16_t)elapsed_ms;
+
+        IMU_Tick(chunk);
+        Task2_Tick(chunk);
+        elapsed_ms -= chunk;
+    }
+}
 
 int main(void)
 {
-    /* SysConfig初始化UART和GPIO引脚。 */
+    uint32_t last_loop_ms;
+
     SYSCFG_DL_init();
+    App_TimebaseInit();
     g_startup_stage = 1U;
 
-    /* 电机驱动板UART必须最先初始化。 */
     USART_Init();
     g_startup_stage = 2U;
 
-    /*
-     * 不做电机前后自检，保证比赛上电后小车不会自行移动。
-     * 等待驱动板启动后只发送一次全零速度。
-     */
     delay_ms(MOTOR_DRIVER_BOOT_DELAY_MS);
     Contrl_Speed(0, 0, 0, 0);
     g_startup_stage = 3U;
 
-    /*
-     * 要求2基础验证版暂时完全不初始化IMU。
-     * 已验证K1和电机链路正常后，先让纯灰度循迹状态机跑通。
-     */
-    /*
-     * IMU 在等待按键期间完成静止标定。
-     * 若 IMU 未连接，超时后自动退回纯灰度循迹。
-     */
     IMU_Init();
-    IMU_StartGyroCalibration(40);
+    IMU_StartGyroCalibration(40U);
 
     Task2_Init();
     g_startup_stage = 4U;
-    delay_ms(100U);
+
+    /*
+     * OLED failure is non-fatal: the car remains testable and
+     * g_display_online stays 0 for diagnosis.
+     */
+    g_display_online = Task2_DisplayInit() ? 1U : 0U;
     g_startup_stage = 5U;
+
+    last_loop_ms = App_Millis();
 
     while (1)
     {
+        uint32_t now_ms = App_Millis();
+        uint32_t elapsed_ms = now_ms - last_loop_ms;
+
+        last_loop_ms = now_ms;
+        App_AdvanceTaskTime(elapsed_ms);
+
         IMU_Process();
-
         Task2_Process();
+        Task2_DisplayProcess();
 
+        /*
+         * This is only the minimum control-loop spacing.
+         * Actual lap time comes from SysTick, so OLED I2C transfer time is
+         * included automatically and cannot make the displayed time slow.
+         */
         delay_ms(CONTROL_LOOP_MS);
-
-        IMU_Tick(CONTROL_LOOP_MS);
-        Task2_Tick(CONTROL_LOOP_MS);
     }
 }
+
